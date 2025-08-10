@@ -8,15 +8,19 @@ class GenerativeResnet(GraspModel):
 
     def __init__(self, input_channels=4, output_channels=1, channel_size=32, dropout=False, prob=0.0):
         super(GenerativeResnet, self).__init__()
+        # input: Nx4x224x224 output: Nx32x224x224
         self.conv1 = nn.Conv2d(input_channels, channel_size, kernel_size=9, stride=1, padding=4)
         self.bn1 = nn.BatchNorm2d(channel_size)
 
+        # input: Nx32x224x224 output: Nx64x112x112
         self.conv2 = nn.Conv2d(channel_size, channel_size * 2, kernel_size=4, stride=2, padding=1)
         self.bn2 = nn.BatchNorm2d(channel_size * 2)
 
+        # input: Nx64x112x112 output: Nx128x56x56
         self.conv3 = nn.Conv2d(channel_size * 2, channel_size * 4, kernel_size=4, stride=2, padding=1)
         self.bn3 = nn.BatchNorm2d(channel_size * 4)
 
+        # 残差块
         self.res1 = ResidualBlock(channel_size * 4, channel_size * 4)
         self.res2 = ResidualBlock(channel_size * 4, channel_size * 4)
         self.res3 = ResidualBlock(channel_size * 4, channel_size * 4)

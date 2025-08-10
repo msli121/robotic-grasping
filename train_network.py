@@ -47,7 +47,7 @@ def parse_args():
                         help='Dataset Name ("cornell" or "jaquard")')
     parser.add_argument('--dataset-path', type=str,
                         help='Path to dataset')
-    parser.add_argument('--split', type=float, default=0.9,
+    parser.add_argument('--split', type=float, default=0.8,
                         help='Fraction of data for training (remainder is validation)')
     parser.add_argument('--ds-shuffle', action='store_true', default=False,
                         help='Shuffle the dataset')
@@ -77,6 +77,16 @@ def parse_args():
                         help='Force code to run in CPU mode')
     parser.add_argument('--random-seed', type=int, default=123,
                         help='Random seed for numpy')
+
+    # 优化后的网络grconvnet_mas的参数配置
+    parser.add_argument('--fpn', type=int, default=1,
+                        help='Use FPN for training (1/0)')
+    parser.add_argument('--cbam', type=int, default=1,
+                        help='Use CBAM for training (1/0)')
+    parser.add_argument('--spdconv', type=int, default=1,
+                        help='Use SPDConv for training (1/0)')
+    parser.add_argument('--spd-scale', type=int, default=2,
+                        help='SPDConv scale for training (2/3/4)')
 
     args = parser.parse_args()
     return args
@@ -172,7 +182,9 @@ def train(epoch, net, device, train_data, optimizer, batches_per_epoch, vis=Fals
             loss = lossd['loss']
 
             if batch_idx % 100 == 0:
-                logging.info('Epoch: {}, Batch: {}, Loss: {:0.4f}'.format(epoch, batch_idx, loss.item()))
+                losses = lossd['losses']
+                loss_str = ', '.join([f'{ln}: {l.item():0.4f}' for ln, l in losses.items()])
+                logging.info('Epoch: {}, Batch: {}, Loss: {:0.4f} Losses: {}'.format(epoch, batch_idx, loss.item(), loss_str))
 
             results['loss'] += loss.item()
             for ln, l in lossd['losses'].items():
@@ -287,12 +299,25 @@ def run():
     logging.info('Loading Network...')
     input_channels = 1 * args.use_depth + 3 * args.use_rgb
     network = get_network(args.network)
-    net = network(
-        input_channels=input_channels,
-        dropout=args.use_dropout,
-        prob=args.dropout_prob,
-        channel_size=args.channel_size
-    )
+    # 选择网络
+    if args.network.lower() == 'grconvnet_mas':
+        net = network(
+            input_channels=input_channels,
+            channel_size=args.channel_size,
+            use_fpn=bool(args.fpn),
+            use_cbam=bool(args.cbam),
+            use_spd=bool(args.spdconv),
+            spd_scale=args.spd_scale,
+            dropout=bool(args.use_dropout),
+            prob=args.dropout_prob
+        )
+    else:
+        net = network(
+            input_channels=input_channels,
+            dropout=args.use_dropout,
+            prob=args.dropout_prob,
+            channel_size=args.channel_size
+        )
 
     net = net.to(device)
     logging.info('Done')
@@ -337,9 +362,14 @@ def run():
         # Save best performing network
         iou = test_results['correct'] / (test_results['correct'] + test_results['failed'])
         if iou > best_iou or epoch == 0 or (epoch % 10) == 0:
-            torch.save(net, os.path.join(save_folder, 'epoch_%02d_iou_%0.2f' % (epoch, iou)))
+            torch.save(net, os.path.join(save_folder, 'epoch_%02d_iou_%0.4f' % (epoch, iou)))
             best_iou = iou
 
 
 if __name__ == '__main__':
+    # baseline cornell
+    # python train_network.py --network grconvnet3 --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell_grconvnet3 --use-dropout 1 --input-size 224
+
+    # 改进全开
+    # python train_network.py --network grconvnet_mas --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell_grconvnet_mas --input-size 224 --use-dropout 1 --fpn 1 --cbam 1 --spdconv 1 --spd-scale 2
     run()

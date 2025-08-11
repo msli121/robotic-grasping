@@ -47,7 +47,7 @@ def parse_args():
                         help='Dataset Name ("cornell" or "jaquard")')
     parser.add_argument('--dataset-path', type=str,
                         help='Path to dataset')
-    parser.add_argument('--split', type=float, default=0.8,
+    parser.add_argument('--split', type=float, default=0.9,
                         help='Fraction of data for training (remainder is validation)')
     parser.add_argument('--ds-shuffle', action='store_true', default=False,
                         help='Shuffle the dataset')
@@ -184,7 +184,8 @@ def train(epoch, net, device, train_data, optimizer, batches_per_epoch, vis=Fals
             if batch_idx % 100 == 0:
                 losses = lossd['losses']
                 loss_str = ', '.join([f'{ln}: {l.item():0.4f}' for ln, l in losses.items()])
-                logging.info('Epoch: {}, Batch: {}, Loss: {:0.4f} Losses: {}'.format(epoch, batch_idx, loss.item(), loss_str))
+                logging.info(
+                    'Epoch: {}, Batch: {}, Loss: {:0.4f} ====> Losses: {}'.format(epoch, batch_idx, loss.item(), loss_str))
 
             results['loss'] += loss.item()
             for ln, l in lossd['losses'].items():
@@ -361,15 +362,25 @@ def run():
 
         # Save best performing network
         iou = test_results['correct'] / (test_results['correct'] + test_results['failed'])
+        if iou > best_iou:
+            # 遍历save_folder， 删除已有的best文件
+            for f in os.listdir(save_folder):
+                if f.startswith('best_iou'):
+                    os.remove(os.path.join(save_folder, f))
+            torch.save(net, os.path.join(save_folder, 'best_iou_epoch_%02d_iou_%0.4f' % (epoch, iou)))
         if iou > best_iou or epoch == 0 or (epoch % 10) == 0:
             torch.save(net, os.path.join(save_folder, 'epoch_%02d_iou_%0.4f' % (epoch, iou)))
-            best_iou = iou
+            if iou > best_iou:
+                best_iou = iou
 
 
 if __name__ == '__main__':
     # baseline cornell
-    # python train_network.py --network grconvnet3 --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell_grconvnet3 --use-dropout 1 --input-size 224
+    # python train_network.py --network grconvnet3 --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell_grconvnet3 --use-dropout 1 --input-size 224 --split 0.8
 
-    # 改进全开
-    # python train_network.py --network grconvnet_mas --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell_grconvnet_mas --input-size 224 --use-dropout 1 --fpn 1 --cbam 1 --spdconv 1 --spd-scale 2
+    # 改进全开 cornell
+    # python train_network.py --network grconvnet_mas --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell_grconvnet_mas --input-size 224 --use-dropout 1 --fpn 1 --cbam 1 --spdconv 1 --spd-scale 2 --split 0.8
+
+    # 改进全开 jacquard
+    # python train_network.py --network grconvnet_mas --dataset jacquard --dataset-path D:\\datasets\\Jacquard --description training_Jacquard_grconvnet_mas --input-size 224 --use-dropout 1 --fpn 1 --cbam 1 --spdconv 1 --spd-scale 2 --split 0.9
     run()

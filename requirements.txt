@@ -1,11 +1,11 @@
-numpy
+numpy==1.23.5
 opencv-python
 matplotlib
 scikit-image
 imageio
-torch
-torchvision
+#torch==2.2.0
+#torchvision==0.17.0
 torchsummary
 tensorboardX
-pyrealsense2
+#pyrealsense2
 Pillow

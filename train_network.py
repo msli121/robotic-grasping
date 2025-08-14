@@ -81,8 +81,12 @@ def parse_args():
     # 优化后的网络grconvnet_mas的参数配置
     parser.add_argument('--fpn', type=int, default=1,
                         help='Use FPN for training (1/0)')
+    parser.add_argument('--goa', type=int, default=1,
+                        help='Use GOA for training (1/0)')
     parser.add_argument('--cbam', type=int, default=1,
                         help='Use CBAM for training (1/0)')
+    parser.add_argument('--aff', type=int, default=1,
+                        help='Use AFF for training (1/0)')
     parser.add_argument('--spdconv', type=int, default=1,
                         help='Use SPDConv for training (1/0)')
     parser.add_argument('--spd-scale', type=int, default=2,
@@ -185,7 +189,8 @@ def train(epoch, net, device, train_data, optimizer, batches_per_epoch, vis=Fals
                 losses = lossd['losses']
                 loss_str = ', '.join([f'{ln}: {l.item():0.4f}' for ln, l in losses.items()])
                 logging.info(
-                    'Epoch: {}, Batch: {}, Loss: {:0.4f} ====> Losses: {}'.format(epoch, batch_idx, loss.item(), loss_str))
+                    'Epoch: {}, Batch: {}, Loss: {:0.4f} ====> Losses: {}'.format(epoch, batch_idx, loss.item(),
+                                                                                  loss_str))
 
             results['loss'] += loss.item()
             for ln, l in lossd['losses'].items():
@@ -301,16 +306,18 @@ def run():
     input_channels = 1 * args.use_depth + 3 * args.use_rgb
     network = get_network(args.network)
     # 选择网络
-    if args.network.lower() == 'grconvnet_mas':
+    if args.network.lower() in ['grconvnet_mas', 'grconvnet_goa']:
         net = network(
             input_channels=input_channels,
             channel_size=args.channel_size,
+            dropout=bool(args.use_dropout),
+            prob=args.dropout_prob,
             use_fpn=bool(args.fpn),
             use_cbam=bool(args.cbam),
+            use_goa=bool(args.goa),
+            use_aff=bool(args.aff),
             use_spd=bool(args.spdconv),
             spd_scale=args.spd_scale,
-            dropout=bool(args.use_dropout),
-            prob=args.dropout_prob
         )
     else:
         net = network(
@@ -378,9 +385,13 @@ if __name__ == '__main__':
     # baseline cornell
     # python train_network.py --network grconvnet3 --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell_grconvnet3 --use-dropout 1 --input-size 224 --split 0.8
 
-    # 改进全开 cornell
+    # mas 改进全开 cornell
     # python train_network.py --network grconvnet_mas --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell_grconvnet_mas --input-size 224 --use-dropout 1 --fpn 1 --cbam 1 --spdconv 1 --spd-scale 2 --split 0.8
 
-    # 改进全开 jacquard
+    # mas 改进全开 jacquard
     # python train_network.py --network grconvnet_mas --dataset jacquard --dataset-path D:\\datasets\\Jacquard --description training_Jacquard_grconvnet_mas --input-size 224 --use-dropout 1 --fpn 1 --cbam 1 --spdconv 1 --spd-scale 2 --split 0.9
+
+    # goa 改进全开 cornell
+    # python train_network.py --network grconvnet_goa --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell_grconvnet_goa --input-size 224 --use-dropout 1 --fpn 1 --goa 1 --spdconv 1 --spd-scale 2 --split 0.8
+
     run()

@@ -29,27 +29,17 @@ class FPN(nn.Module):
 
     def __init__(self, in_channels_list, out_channels):
         super(FPN, self).__init__()
-        self.out_channels = out_channels
+        self.lateral_convs = nn.ModuleList([
+            nn.Conv2d(in_ch, out_channels, kernel_size=1)
+            for in_ch in in_channels_list
+        ])
 
-        # 1x1卷积统一通道数
-        self.lateral_convs = nn.ModuleList()
-        for in_channels in in_channels_list:
-            self.lateral_convs.append(
-                nn.Conv2d(in_channels, out_channels, kernel_size=1)
-            )
-
-    def forward(self, *features):
-        """
-        Args:
-            features: 多个特征图 [c1, c2, c4]
-        Returns:
-            统一通道数的特征 [p2, p3, p4]
-        """
-        laterals = []
-        for i, feature in enumerate(features):
-            lateral = self.lateral_convs[i](feature)
-            laterals.append(lateral)
-        return laterals
+    def forward(self, c1, c2, c4):
+        # c1: 224, c2: 112, c4: 56
+        p4 = self.lateral_convs[2](c4)
+        p3 = self.lateral_convs[1](c2) + F.interpolate(p4, size=c2.shape[-2:], mode='nearest')
+        p2 = self.lateral_convs[0](c1) + F.interpolate(p3, size=c1.shape[-2:], mode='nearest')
+        return p2, p3, p4
 
 
 class SPDConv(nn.Module):
@@ -113,12 +103,28 @@ class CBAM(nn.Module):
 
 
 class GraspOrientedAttention(nn.Module):
-    """抓取导向注意力机制 (GOA) - 核心创新模块"""
+    """抓取导向注意力机制 (GOA) - 支持 BN / GN 切换"""
 
-    def __init__(self, channels, reduction=8):
+    def __init__(self, channels, reduction=8, norm_type='BN', num_groups=8):
+        """
+        Args:
+            channels (int): 输入通道数
+            reduction (int): 通道缩减比
+            norm_type (str): 归一化类型，可选 'BN' 或 'GN'
+            num_groups (int): 当 norm_type='GN' 时，GN 的分组数
+        """
         super(GraspOrientedAttention, self).__init__()
         self.channels = channels
         self.reduction = reduction
+
+        # 根据 norm_type 选择归一化层
+        def NormLayer(ch):
+            if norm_type.upper() == 'GN':
+                return nn.GroupNorm(num_groups, ch)
+            elif norm_type.upper() == 'BN':
+                return nn.BatchNorm2d(ch)
+            else:
+                raise ValueError("norm_type 必须是 'BN' 或 'GN'")
 
         # === 抓取三要素分支 ===
         # 位置分支：全局分布
@@ -126,7 +132,7 @@ class GraspOrientedAttention(nn.Module):
             nn.AdaptiveAvgPool2d(1),
             nn.Conv2d(channels, channels // reduction, 1),
             nn.ReLU(inplace=True),
-            nn.BatchNorm2d(channels // reduction)
+            NormLayer(channels // reduction)
         )
 
         # 角度分支：局部方向
@@ -134,7 +140,7 @@ class GraspOrientedAttention(nn.Module):
             nn.Conv2d(channels, channels // reduction, 3, padding=1),
             nn.ReLU(inplace=True),
             nn.AdaptiveAvgPool2d(1),
-            nn.BatchNorm2d(channels // reduction)
+            NormLayer(channels // reduction)
         )
 
         # 宽度分支：空间结构
@@ -142,35 +148,31 @@ class GraspOrientedAttention(nn.Module):
             nn.Conv2d(channels, channels // reduction, 5, padding=2),
             nn.ReLU(inplace=True),
             nn.AdaptiveAvgPool2d(1),
-            nn.BatchNorm2d(channels // reduction)
+            NormLayer(channels // reduction)
         )
 
-        # 三要素融合
+        # 三要素融合（通道注意力）
         self.channel_fusion = nn.Sequential(
             nn.Conv2d(3 * (channels // reduction), channels, 1),
             nn.Sigmoid()
         )
 
-        # 空间注意力（含标准差池化创新）
+        # 空间注意力（含标准差池化）
         self.spatial_attention = nn.Sequential(
-            nn.Conv2d(3, 1, kernel_size=7, padding=3),  # max, avg, std
-            nn.BatchNorm2d(1),
+            nn.Conv2d(3, 1, kernel_size=7, padding=3),
+            NormLayer(1),
             nn.Sigmoid()
         )
 
     def forward(self, x):
-        batch_size, channels, height, width = x.size()
-
         # === 通道注意力：抓取三要素 ===
-        pos_feat = self.position_branch(x)  # 位置特征
-        angle_feat = self.angle_branch(x)  # 角度特征
-        width_feat = self.width_branch(x)  # 宽度特征
+        pos_feat = self.position_branch(x)  # 抓取位置特征
+        angle_feat = self.angle_branch(x)  # 抓取角度特征
+        width_feat = self.width_branch(x)  # 抓取宽度特征
 
         # 融合三要素特征
         combined_feat = torch.cat([pos_feat, angle_feat, width_feat], dim=1)
         channel_attention = self.channel_fusion(combined_feat)
-
-        # 应用通道注意力
         x_channel = x * channel_attention
 
         # === 空间注意力：含标准差池化 ===
@@ -181,7 +183,7 @@ class GraspOrientedAttention(nn.Module):
         spatial_input = torch.cat([max_pool, avg_pool, std_pool], dim=1)
         spatial_attention = self.spatial_attention(spatial_input)
 
-        # 最终输出
+        # 输出
         output = x_channel * spatial_attention
         return output
 
@@ -291,7 +293,7 @@ class GenerativeResnet(GraspModel):
             'use_aff': use_aff,
             'spd_scale': spd_scale
         }
-
+        self.use_fpn, self.use_spd, self.use_goa, self.use_aff = use_fpn, use_spd, use_goa, use_aff
         cs = channel_size
 
         # 互斥检查
@@ -348,6 +350,9 @@ class GenerativeResnet(GraspModel):
         if use_aff:
             self.fusion1 = AdaptiveFeatureFusion(cs * 2)  # 创新
             self.fusion2 = AdaptiveFeatureFusion(cs)  # 创新
+        else:
+            self.fusion1 = self._simple_fusion
+            self.fusion2 = self._simple_fusion
 
         # === 输出头 (与原始保持一致) ===
         # 注意：使用2x2卷积保持与原始grconvnet3.py一致
@@ -398,59 +403,32 @@ class GenerativeResnet(GraspModel):
         c1, c2, c4 = self._encode(x_in)
 
         # === 多尺度特征提取 ===
-        if self.config['use_fpn']:
-            fpn_features = self.fpn(c1, c2, c4)
-            p2, p3, p4 = fpn_features
+        if self.use_fpn:
+            p2, p3, p4 = self.fpn(c1, c2, c4)
 
         # === SPD空间增强 ===
-        if self.config['use_spd']:
+        if self.use_spd:
             spd_features = self.spd(c1)
 
         # === 解码阶段 (保持原始流程) ===
-
         # 第一阶段：56x56 -> 112x112
         x = F.relu(self.bn4(self.conv4(c4)))
-
-        # 第一个融合点
-        if self.config['use_fpn']:
-            p3_aligned = F.interpolate(p3, size=x.shape[-2:], mode='nearest')
-            p3_projected = self.channel_proj(p3_aligned)  # 通道对齐
-
-            if self.config['use_aff']:
-                x = self.fusion1(x, p3_projected)  # 🔥 AFF融合
-            else:
-                x = self._simple_fusion(x, p3_projected)
-
+        # FPN特征融合，第一个融合点
+        if self.use_fpn:
+            x = self.fusion1(x, self.channel_proj(F.interpolate(p3, size=x.shape[-2:], mode='nearest')))
         # 第一个注意力点
-        x = self.attention1(x)  # 🎯 GOA或CBAM
+        x = self.attention1(x)  # GOA or CBAM or identity
 
         # 第二阶段：112x112 -> 224x224
         x = F.relu(self.bn5(self.conv5(x)))
-
-        # 第二个融合点 - 多特征融合
-        fusion_count = 0
-
-        # FPN特征融合
-        if self.config['use_fpn']:
-            p2_aligned = F.interpolate(p2, size=x.shape[-2:], mode='nearest')
-
-            if self.config['use_aff'] and fusion_count == 0:
-                x = self.fusion2(x, p2_aligned)  # 🔥 AFF融合
-                fusion_count += 1
-            else:
-                x = self._simple_fusion(x, p2_aligned)
-
+        # FPN特征融合，第二个融合点
+        if self.use_fpn:
+            x = self.fusion2(x, F.interpolate(p2, size=x.shape[-2:], mode='nearest'))
         # SPD特征融合
-        if self.config['use_spd']:
-            spd_aligned = F.interpolate(spd_features, size=x.shape[-2:], mode='nearest')
-
-            if self.config['use_aff'] and fusion_count == 0:
-                x = self.fusion2(x, spd_aligned)  # 🔥 AFF融合
-            else:
-                x = self._simple_fusion(x, spd_aligned)
-
+        if self.use_spd:
+            x = self.fusion2(x, F.interpolate(spd_features, size=x.shape[-2:], mode='nearest'))
         # 第二个注意力点
-        x = self.attention2(x)  # 🎯 GOA或CBAM
+        x = self.attention2(x)
 
         # 特征细化
         x = self.conv6(x)
@@ -574,7 +552,7 @@ if __name__ == "__main__":
 
         # 测试前向传播
         with torch.no_grad():
-            x = torch.randn(2, 4, 224, 224).to(device)
+            x = torch.randn(2, 4, 300, 300).to(device)
             outputs = model(x)
 
             print(f"输出形状: {[out.shape for out in outputs]}")
@@ -587,4 +565,4 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"损失计算失败: {e}")
 
-    print("\n✅ 测试完成！模型已准备好集成到原框架中。")
+    print("\n✅ 模型基础测试完成！")

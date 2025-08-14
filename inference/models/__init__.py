@@ -20,5 +20,9 @@ def get_network(network_name):
     elif network_name == 'grconvnet_mas':
         from .grconvnet_mas import GRConvNetMAS
         return GRConvNetMAS
+    # 基于GOA的改进GR-ConvNet
+    elif network_name == 'grconvnet_goa':
+        from .grconvnet_goa import GenerativeResnet
+        return GenerativeResnet
     else:
         raise NotImplementedError('Network {} is not implemented'.format(network_name))

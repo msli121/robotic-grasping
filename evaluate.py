@@ -173,5 +173,8 @@ def run():
 
 
 if __name__ == '__main__':
-    # python evaluate.py --network 'trained-models/cornell-randsplit-rgbd-grconvnet3-drop1-ch32/epoch_19_iou_0.98' --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --iou-eval
+    # baseline corne
+    # python evaluate.py --network trained-models/cornell-randsplit-rgbd-grconvnet3-drop1-ch32/epoch_19_iou_0.98 --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --iou-eval
+
+    # python evaluate.py --network D:\PycharmProjects\robotic-grasping-origin\logs\20250219_0025_training_cornell\epoch_44_iou_0.94 --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --iou-eval
     run()

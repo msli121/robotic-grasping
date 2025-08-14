@@ -397,4 +397,7 @@ if __name__ == '__main__':
     # goa 改进全开 cornell
     # python train_network.py --network grconvnet_goa --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell_grconvnet_goa --input-size 224 --use-dropout 1 --fpn 1 --goa 1 --spdconv 1 --spd-scale 2 --split 0.8
 
+    # goa 改进全开 jacquard
+    # python train_network.py --network grconvnet_goa --dataset jacquard --dataset-path D:\\datasets\\Jacquard --description training_Jacquard_grconvnet_goa --input-size 224 --use-dropout 1 --fpn 1 --goa 1 --spdconv 1 --spd-scale 2 --split 0.9
+
     run()

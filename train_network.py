@@ -385,6 +385,9 @@ if __name__ == '__main__':
     # baseline cornell
     # python train_network.py --network grconvnet3 --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell_grconvnet3 --use-dropout 1 --input-size 224 --split 0.8
 
+    # baseline jacquard
+    # python train_network.py --network grconvnet3 --dataset jacquard --dataset-path D:\\datasets\\Jacquard --description training_Jacquard_grconvnet3 --use-dropout 1 --input-size 224 --split 0.9
+
     # mas 改进全开 cornell
     # python train_network.py --network grconvnet_mas --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell_grconvnet_mas --input-size 224 --use-dropout 1 --fpn 1 --cbam 1 --spdconv 1 --spd-scale 2 --split 0.8
 

@@ -1,5 +1,7 @@
 import argparse
+import datetime
 import logging
+import os
 import time
 
 import numpy as np
@@ -73,9 +75,13 @@ def parse_args():
 
 def run():
     args = parse_args()
+    init_log(args)
 
     # Get the compute device
     device = get_device(args.force_cpu)
+
+    # Print Args
+    logging.info(args)
 
     # Load Dataset
     logging.info('Loading {} Dataset...'.format(args.dataset.title()))
@@ -104,6 +110,11 @@ def run():
         sampler=val_sampler
     )
     logging.info('Done')
+
+    start_time = time.time()
+    last_print_time = time.time()
+    total = len(test_data)
+    correct = 0
 
     for network in args.network:
         logging.info('\nEvaluating model {}'.format(network))
@@ -140,6 +151,18 @@ def run():
                     else:
                         results['failed'] += 1
 
+                    # 每隔10秒计算进度信息打印
+                    now_time = time.time()
+                    if now_time - last_print_time > 10:
+                        progress = ((idx + 1) / total) * 100
+                        # current_iou = correct / (idx + 1) if idx > 0 else 0
+                        current_iou = ' %d/%d = %f' % (results['correct'],
+                                                       results['correct'] + results['failed'],
+                                                       results['correct'] / (
+                                                               results['correct'] + results['failed']))
+                        logging.info('Progress: {:.2f}% - Current IOU: {}'.format(progress, current_iou))
+                        last_print_time = now_time
+
                 if args.jacquard_output:
                     grasps = grasp.detect_grasps(q_img, ang_img, width_img=width_img, no_grasps=1)
                     with open(jo_fn, 'a') as f:
@@ -171,6 +194,29 @@ def run():
         del net
         torch.cuda.empty_cache()
 
+def init_log(args):
+    # Set-up output directories
+    dt = datetime.datetime.now().strftime('%Y%m%d_%H%M')
+    net_desc = '{}_{}'.format(dt, '_'.join(args.description.split()))
+
+    save_folder = os.path.join(args.logdir, 'evaluate', net_desc)
+    os.makedirs(save_folder, exist_ok=True)
+    # Initialize logging
+    logging.root.handlers = []
+    logging.basicConfig(
+        level=logging.INFO,
+        filename="{0}/{1}.log".format(save_folder, 'log'),
+        format='[%(asctime)s] {%(pathname)s:%(lineno)d} %(levelname)s - %(message)s',
+        datefmt='%H:%M:%S'
+    )
+    # set up logging to console
+    console = logging.StreamHandler()
+    console.setLevel(logging.INFO)
+    # set a format which is simpler for console use
+    formatter = logging.Formatter('[%(asctime)s] %(name)-12s: %(levelname)-8s %(message)s')
+    console.setFormatter(formatter)
+    # add the handler to the root logger
+    logging.getLogger('').addHandler(console)
 
 if __name__ == '__main__':
     # baseline corne

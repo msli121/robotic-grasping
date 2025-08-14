@@ -1,16 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-grconvnet_goa.py.py - 集成GOA和AFF的改进GR-ConvNet
+grconvnet_goa.py.py - 基于GOA注意力机制的改进GR-ConvNet
 
 完全兼容原框架，在原有代码基础上集成改进模块：
-1. 保持与原始 GraspModel 的完全兼容
+1. 保持与原始 GR-ConvNet 完全兼容
 2. 支持所有原有的训练/测试流程
-3. 支持多尺度特征融合
 3. 集成 GOA (抓取导向注意力) 和 AFF (自适应特征融合)
-4. 支持灵活的消融实验配置
+4. 支持模块：FPN/GOA/AFF/CBAM/SPD-Conv，模块可可选，支持灵活的消融实验配置
 
 Author: [lms]
-Date: 2025
+Date: 2025.8
 """
 
 import torch
@@ -277,10 +276,10 @@ class GenerativeResnet(GraspModel):
                  prob=0.0,
                  # 新增参数：模块开关
                  use_fpn=False,
-                 use_spd=False,
                  use_cbam=False,
                  use_goa=False,
                  use_aff=False,
+                 use_spd=False,
                  spd_scale=2):
         super(GenerativeResnet, self).__init__()
 

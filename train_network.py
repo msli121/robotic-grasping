@@ -79,15 +79,15 @@ def parse_args():
                         help='Random seed for numpy')
 
     # 优化后的网络grconvnet_mas的参数配置
-    parser.add_argument('--fpn', type=int, default=1,
+    parser.add_argument('--fpn', type=int, default=0,
                         help='Use FPN for training (1/0)')
-    parser.add_argument('--goa', type=int, default=1,
+    parser.add_argument('--goa', type=int, default=0,
                         help='Use GOA for training (1/0)')
-    parser.add_argument('--cbam', type=int, default=1,
+    parser.add_argument('--cbam', type=int, default=0,
                         help='Use CBAM for training (1/0)')
-    parser.add_argument('--aff', type=int, default=1,
+    parser.add_argument('--aff', type=int, default=0,
                         help='Use AFF for training (1/0)')
-    parser.add_argument('--spdconv', type=int, default=1,
+    parser.add_argument('--spdconv', type=int, default=0,
                         help='Use SPDConv for training (1/0)')
     parser.add_argument('--spd-scale', type=int, default=2,
                         help='SPDConv scale for training (2/3/4)')

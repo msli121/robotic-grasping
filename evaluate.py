@@ -63,6 +63,10 @@ def parse_args():
     parser.add_argument('--random-seed', type=int, default=123,
                         help='Random seed for numpy')
 
+    # log
+    parser.add_argument('--logdir', type=str, default='logs/',
+                        help='Log directory')
+
     args = parser.parse_args()
 
     if args.jacquard_output and args.dataset != 'jacquard':

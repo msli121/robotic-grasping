@@ -78,14 +78,17 @@ def parse_args():
 
 
 def run():
+    # Parse args
     args = parse_args()
+
+    # Init log
     init_log(args)
+
+    # Print Args
+    logging.info(f'Arguments: {args}')
 
     # Get the compute device
     device = get_device(args.force_cpu)
-
-    # Print Args
-    logging.info(args)
 
     # Load Dataset
     logging.info('Loading {} Dataset...'.format(args.dataset.title()))
@@ -113,7 +116,7 @@ def run():
         num_workers=args.num_workers,
         sampler=val_sampler
     )
-    logging.info('Done')
+    logging.info('Load test data done!')
 
     start_time = time.time()
     last_print_time = time.time()
@@ -201,8 +204,7 @@ def run():
 def init_log(args):
     # Set-up output directories
     dt = datetime.datetime.now().strftime('%Y%m%d_%H%M')
-    net_desc = '{}_{}'.format(dt, '_'.join(args.description.split()))
-
+    net_desc = '{}_{}'.format(dt, args.dataset)
     save_folder = os.path.join(args.logdir, 'evaluate', net_desc)
     os.makedirs(save_folder, exist_ok=True)
     # Initialize logging
@@ -226,5 +228,13 @@ if __name__ == '__main__':
     # baseline corne
     # python evaluate.py --network trained-models/cornell-randsplit-rgbd-grconvnet3-drop1-ch32/epoch_19_iou_0.98 --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --iou-eval
 
-    # python evaluate.py --network D:\PycharmProjects\robotic-grasping-origin\logs\20250219_0025_training_cornell\epoch_44_iou_0.94 --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --iou-eval
+    # python evaluate.py --network trained-models/jacquard-rgbd-grconvnet3-drop0-ch32/epoch_48_iou_0.93 --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --iou-eval
+    # python evaluate.py --network logs/250814_1440_training_cornell_grconvnet_goa/best_iou_epoch_21_iou_0.9153 --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --iou-eval
+    # python evaluate.py --network logs/250814_1440_training_cornell_grconvnet_goa/best_iou_epoch_21_iou_0.9153 --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --iou-eval
+
+    # python evaluate.py --network logs/250811_0138_training_cornell_grconvnet3/epoch_33_iou_0.9209 --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --iou-eval
+
+    # python train_network.py --dataset jacquard --dataset-path <Path To Dataset> --description training_jacquard --use-dropout 0 --input-size 300
+
+    # python evaluate.py --network logs/250812_0009_training_Jacquard_grconvnet3/best_iou_epoch_35_iou_0.8903 --dataset jacquard --dataset-path D:\\datasets\\Jacquard --iou-eval --input-size 224
     run()

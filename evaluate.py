@@ -71,7 +71,7 @@ def parse_args():
     return args
 
 
-if __name__ == '__main__':
+def run():
     args = parse_args()
 
     # Get the compute device
@@ -170,3 +170,8 @@ if __name__ == '__main__':
 
         del net
         torch.cuda.empty_cache()
+
+
+if __name__ == '__main__':
+    # python evaluate.py --network 'trained-models/cornell-randsplit-rgbd-grconvnet3-drop1-ch32/epoch_19_iou_0.98' --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --iou-eval
+    run()

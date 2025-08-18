@@ -22,13 +22,21 @@ class DensorRobot:
     def __init__(self, host="192.168.1.11", port=5002):
         self.host = host
         self.port = port
+        self.receive_flag = True  # 用于控制接收消息的标识
         self.tcp_client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.recv_thread = None
+        self.current_position = []  # 机器臂当前位置
+
+    def connect(self):
         self.tcp_client.connect((self.host, self.port))
         self.recv_thread = threading.Thread(target=self.receive_message)  # 创建接收消息的线程
-        self.receive_flag = True  # 用于控制接收消息的标识
         self.recv_thread.daemon = True  # 设置线程为守护线程
         self.recv_thread.start()  # 启动接收消息线程
-        self.current_position = []  # 机器臂当前位置
+
+    def close(self):
+        self.receive_flag = False  # 设置接收消息的标识为False，结束接收线程
+        self.recv_thread.join(timeout=5)  # 等待接收线程结束
+        self.tcp_client.close()
 
     def __send_cmd(self, cmd):
         if not isinstance(cmd, str):
@@ -103,11 +111,6 @@ class DensorRobot:
             except Exception as e:  # 当socket连接出错时结束循环
                 print("[robot] Socket error:", str(e))
                 break
-
-    def close(self):
-        self.receive_flag = False  # 设置接收消息的标识为False，结束接收线程
-        self.recv_thread.join(timeout=5)  # 等待接收线程结束
-        self.tcp_client.close()
 
 
 if __name__ == "__main__":

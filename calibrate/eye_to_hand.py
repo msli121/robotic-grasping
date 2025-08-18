@@ -507,5 +507,3 @@ if __name__ == '__main__':
     #                             )
 
     verify_calibration_by_realsense_camera()
-
-    # verify_calibration_by_realsense_camera()

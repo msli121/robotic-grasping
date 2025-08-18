@@ -2,10 +2,10 @@
 # @Time       : 2025/8/16 20:27
 # @File       : draw_corner.py
 # @Description: 检测标定板角点并保存带角点标记的图像
-import os
-import cv2
-import numpy as np
 import logging
+import os
+
+import cv2
 
 # 配置日志
 logging.basicConfig(

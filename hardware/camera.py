@@ -72,15 +72,23 @@ class RealSenseCamera:
 
         plt.show()
 
+    def get_K_and_dist(self):
+        """
+        获取相机内参矩阵
+        :return: 内参矩阵K
+        """
+        # 构造矩阵形式
+        K = np.array([[self.intrinsics.fx, 0, self.intrinsics.ppx],
+                      [0, self.intrinsics.fy, self.intrinsics.ppy],
+                      [0, 0, 1]])
+        dist = np.array(self.intrinsics.coeffs)
+        return K, dist
+
 
 if __name__ == '__main__':
     cam = RealSenseCamera(device_id=246422072474)
     cam.connect()
-    # 组装内参矩阵和畸变系数
-    K = np.array([[cam.intrinsics.fx, 0, cam.intrinsics.ppx],
-                  [0, cam.intrinsics.fy, cam.intrinsics.ppy],
-                  [0, 0, 1]])
-    dist = np.array(cam.intrinsics.coeffs)
+    K, dist = cam.get_K_and_dist()
     print("内参矩阵:", K)
     print("畸变系数:", dist)
     while True:

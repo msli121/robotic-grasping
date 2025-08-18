@@ -1,3 +1,10 @@
+# -*- coding: utf-8 -*-
+# @Time       : 2025/8/16 17:39
+# @File       : calibrate_camera.py
+# @Description: 相机外参标定，通过SVD求解点集的刚性变换矩阵，完成相机坐标系到机械臂坐标系的变换矩阵camera2world求解
+# @Author     : lms
+# @Date       : 2025/8/16 17:39
+
 import logging
 import os
 import time

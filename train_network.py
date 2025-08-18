@@ -227,7 +227,7 @@ def run():
     args = parse_args()
 
     # Set-up output directories
-    dt = datetime.datetime.now().strftime('%y%m%d_%H%M')
+    dt = datetime.datetime.now().strftime('%Y%m%d_%H%M')
     net_desc = '{}_{}'.format(dt, '_'.join(args.description.split()))
 
     save_folder = os.path.join(args.logdir, net_desc)

@@ -1,4 +1,5 @@
 import logging
+import math
 import os
 import time
 
@@ -91,14 +92,14 @@ class Calibration:
         :return calibration grid points
         """
         gridspace_x = np.linspace(self.workspace_limits[0][0], self.workspace_limits[0][1],
-                                  1 + (self.workspace_limits[0][1] - self.workspace_limits[0][
-                                      0]) / self.calib_grid_step)
+                                  math.ceil((self.workspace_limits[0][1] - self.workspace_limits[0][
+                                      0]) / self.calib_grid_step))
         gridspace_y = np.linspace(self.workspace_limits[1][0], self.workspace_limits[1][1],
-                                  1 + (self.workspace_limits[1][1] - self.workspace_limits[1][
-                                      0]) / self.calib_grid_step)
+                                  math.ceil((self.workspace_limits[1][1] - self.workspace_limits[1][
+                                      0]) / self.calib_grid_step))
         gridspace_z = np.linspace(self.workspace_limits[2][0], self.workspace_limits[2][1],
-                                  1 + (self.workspace_limits[2][1] - self.workspace_limits[2][
-                                      0]) / self.calib_grid_step)
+                                  math.ceil((self.workspace_limits[2][1] - self.workspace_limits[2][
+                                      0]) / self.calib_grid_step))
         calib_grid_x, calib_grid_y, calib_grid_z = np.meshgrid(gridspace_x, gridspace_y, gridspace_z)
         num_calib_grid_pts = calib_grid_x.shape[0] * calib_grid_x.shape[1] * calib_grid_x.shape[2]
         calib_grid_x.shape = (num_calib_grid_pts, 1)

@@ -74,7 +74,14 @@ class RealSenseCamera:
 
 
 if __name__ == '__main__':
-    cam = RealSenseCamera(device_id=830112070066)
+    cam = RealSenseCamera(device_id=246422072474)
     cam.connect()
+    # 组装内参矩阵和畸变系数
+    K = np.array([[cam.intrinsics.fx, 0, cam.intrinsics.ppx],
+                  [0, cam.intrinsics.fy, cam.intrinsics.ppy],
+                  [0, 0, 1]])
+    dist = np.array(cam.intrinsics.coeffs)
+    print("内参矩阵:", K)
+    print("畸变系数:", dist)
     while True:
         cam.plot_image_bundle()

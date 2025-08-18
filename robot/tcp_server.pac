@@ -1,0 +1,50 @@
+'!TITLE "<机器人作为SERVER进行TCP通信>"
+PROGRAM TCP_SERVER
+	DEFINT FLAG, JN
+	DEFSNG ANGLE
+	FLUSH #5
+	DEFSTR CMD,CMD_PREFIX
+	DO
+		COM_STATE #5, FLAG
+		I[3] = FLAG
+		IF FLAG = - 1 THEN
+			FLUSH #5
+			COM_DISCOM #5
+			DELAY 500
+			COM_ENCOM #5
+		ELSEIF FLAG <> - 1 THEN
+			INPUT #5, CMD, WTIME = 200, RVAL = I11
+			'INPUT #5, P11, WTIME = 100, RVAL = I11
+
+			IF I11=1 THEN
+				CMD_PREFIX = LEFT$(CMD,3)
+				IF CMD_PREFIX="CP#" THEN '获取当前位置信息指令
+					PRINT #5,"CP#",POSX(CURPOS),POSY(CURPOS),POSZ(CURPOS),POSRX(CURPOS),POSRY(CURPOS),POSRZ(CURPOS),CURFIG  '获取将当前的工具坐标系上的位置+姿态+形态
+				ELSEIF CMD_PREFIX="SP#" THEN '移动到指定位置指令
+					INPUT #5, P11, WTIME = 100, RVAL = I11 '再读一次获取位置信息
+					IF I11=1 THEN
+						IF STATUS(PRO11) = 1 THEN
+							KILL PRO11
+							DELAY 10
+						END IF
+						RUN PRO11
+					ENDIF
+				ELSEIF CMD_PREFIX="RA#" THEN '旋转指定轴的相对角度 relative angle
+				    INPUT #5, JN,ANGLE,WTIME = 100, RVAL = I11
+				    IF I11=1 THEN
+						TAKEARM
+				        DRIVE (JN, ANGLE)
+				    ENDIF
+			    ELSEIF CMD_PREFIX="AA#" THEN '旋转指定轴的绝对角度 relative angle
+				    INPUT #5, JN,ANGLE,WTIME = 100, RVAL = I11
+				    IF I11=1 THEN
+						TAKEARM
+				        DRIVEA (JN, ANGLE)
+				    ENDIF
+				ENDIF
+			ENDIF
+
+			DELAY 10
+		END IF
+	LOOP
+END

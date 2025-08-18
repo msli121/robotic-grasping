@@ -142,9 +142,9 @@ class CalibrateCamera:
 
         # 连接机器人
         self.robot.connect()
-        self.home_position = [250.0, 0.0, 240.0, -140, -75, -41, 9]
+        home_position = [250.0, 0.0, 240.0, -140, -75, -41, 9]
         # 机器人移动到默认位置
-        self.robot.send_position(self.home_position)
+        self.robot.send_position(home_position)
         # 等待机械臂到达指定位置
         time.sleep(2)
 
@@ -161,7 +161,7 @@ class CalibrateCamera:
             # 用tool_position替换home_position的前三个元素，并且乘以1000
             robot_position = tool_position * 1000
             robot_position = list(robot_position)
-            robot_position.extend(self.home_position[3:])
+            robot_position.extend(home_position[3:])
             logger.info(f'位置{index} 开始移动到指定位置: {robot_position}')
 
             # 机器人移动到指定位置

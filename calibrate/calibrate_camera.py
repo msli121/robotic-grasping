@@ -25,6 +25,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 
 class CalibrateCamera:
     def __init__(self,
@@ -159,10 +161,10 @@ class CalibrateCamera:
         logger.info(f'工作空间总点数: {calib_grid_pts.shape[0]}')
 
         # 标定照片保存的文件夹
-        image_save_dir = os.path.join('data', 'calibration_images')
+        image_save_dir = os.path.join(BASE_DIR, 'data', 'calibration_images')
         os.makedirs(image_save_dir, exist_ok=True)
         # 标定结果保存路径
-        calibrate_result_dir = os.path.join("data")
+        calibrate_result_dir = os.path.join(BASE_DIR, 'data')
 
         for index, tool_position in enumerate(calib_grid_pts):
             # 用tool_position替换home_position的前三个元素，并且乘以1000

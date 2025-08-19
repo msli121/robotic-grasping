@@ -126,15 +126,15 @@ class CalibrateCamera:
         生成机械臂工作空间中的3D网格点
         :return calibration grid points
         """
-        gridspace_x = np.linspace(self.workspace_limits[0][0], self.workspace_limits[0][1],
-                                  np.ceil(1 + (self.workspace_limits[0][1] - self.workspace_limits[0][
-                                      0]) / self.calib_grid_step))
-        gridspace_y = np.linspace(self.workspace_limits[1][0], self.workspace_limits[1][1],
-                                  np.ceil(1 + (self.workspace_limits[1][1] - self.workspace_limits[1][
-                                      0]) / self.calib_grid_step))
-        gridspace_z = np.linspace(self.workspace_limits[2][0], self.workspace_limits[2][1],
-                                  np.ceil(1 + (self.workspace_limits[2][1] - self.workspace_limits[2][
-                                      0]) / self.calib_grid_step))
+        # 将计算出的样本数量转换为整数
+        x_num = int(np.ceil(1 + (self.workspace_limits[0][1] - self.workspace_limits[0][0]) / self.calib_grid_step))
+        y_num = int(np.ceil(1 + (self.workspace_limits[1][1] - self.workspace_limits[1][0]) / self.calib_grid_step))
+        z_num = int(np.ceil(1 + (self.workspace_limits[2][1] - self.workspace_limits[2][0]) / self.calib_grid_step))
+
+        gridspace_x = np.linspace(self.workspace_limits[0][0], self.workspace_limits[0][1], x_num)
+        gridspace_y = np.linspace(self.workspace_limits[1][0], self.workspace_limits[1][1], y_num)
+        gridspace_z = np.linspace(self.workspace_limits[2][0], self.workspace_limits[2][1], z_num)
+
         calib_grid_x, calib_grid_y, calib_grid_z = np.meshgrid(gridspace_x, gridspace_y, gridspace_z)
         num_calib_grid_pts = calib_grid_x.shape[0] * calib_grid_x.shape[1] * calib_grid_x.shape[2]
         calib_grid_x.shape = (num_calib_grid_pts, 1)
@@ -174,7 +174,7 @@ class CalibrateCamera:
         camera_depth_scale_file = os.path.join(data_save_dir, f'camera_depth_scale.txt')
         logger.info(f'相机深度缩放系数 保存路径: {os.path.abspath(camera_depth_scale_file)}')
         np.savetxt(camera_depth_scale_file, camera_depth_offset, delimiter=' ')
-        rmse = self._get_rigid_transform_error(camera_depth_offset)
+        rmse = self._get_rigid_transform_error(z_scale=camera_depth_offset)
         logger.info(f'标定结果均方根误差(RMSE): {rmse}')
         camera_pose_file = os.path.join(data_save_dir, f'camera_pose.txt')
         np.savetxt(camera_pose_file, self.camera2world, delimiter=' ')
@@ -183,6 +183,11 @@ class CalibrateCamera:
 
     def run(self):
         logging.info('开始标定...')
+
+        # 计算空间坐标点
+        calib_grid_pts = self._generate_grid()
+        logger.info(f'工作空间总点数: {calib_grid_pts.shape[0]}')
+
         # 连接相机
         self.camera.connect()
         logger.info(f"相机连接成功...")
@@ -191,15 +196,13 @@ class CalibrateCamera:
         logger.info(f"相机畸变系数: {dist}")
 
         # 连接机器人
+        logger.info(f"开始连接机器人...")
         self.robot.connect()
-        home_position = [250.0, 0.0, 240.0, -140, -75, -41, 9]
+        home_position = [300.0, 5, 200.0, 127, 76, 122, 1]
         # 机器人移动到默认位置
         self.robot.send_position(home_position)
         # 等待机械臂到达指定位置
         time.sleep(2)
-
-        calib_grid_pts = self._generate_grid()
-        logger.info(f'工作空间总点数: {calib_grid_pts.shape[0]}')
 
         # 标定照片保存的文件夹
         current_time = time.strftime("%Y%m%d%H%M%S", time.localtime())
@@ -313,16 +316,30 @@ class CalibrateCamera:
             else:
                 logger.error(f"位置{index:02d} 标定板未找到角点")
                 continue
+
+        # 机器人移动到默认位置
+        self.robot.send_position(home_position)
+        # 等待机械臂到达指定位置
+        time.sleep(2)
+
         # 执行标定
         self._do_calibrate(data_save_dir=data_save_dir)
 
-    def run_offline(self, data_save_dir=None, max_img_num=50):
+    def run_offline(self, data_save_dir=None, max_img_num=80):
         """
         使用已经拍摄好的rgb图、深度图、机械臂末端位姿坐标 离线标定
         """
         if data_save_dir is None:
             logger.error('请输入数据保存目录')
             return
+
+        # 连接相机
+        self.camera.connect()
+        logger.info(f"相机连接成功...")
+        K, dist = self.camera.get_K_and_dist()
+        logger.info(f"相机内参: {K}")
+        logger.info(f"相机畸变系数: {dist}")
+
         # 加载数据
         rgb_files = sorted(glob.glob(os.path.join(data_save_dir, '*origin_rgb.png')))
         depth_files = sorted(glob.glob(os.path.join(data_save_dir, '*depth_raw.npy')))
@@ -347,7 +364,7 @@ class CalibrateCamera:
             bgr_color_img = cv2.imread(rgb_file)
             depth_img = np.load(depth_file)
             robot_pose = np.loadtxt(robot_pose_file, delimiter=' ')
-            tool_position = robot_pose[:3]
+            tool_position = robot_pose[:3] / 1000
 
             gray_data = cv2.cvtColor(bgr_color_img, cv2.COLOR_RGB2GRAY)
             checkerboard_found, corners = cv2.findChessboardCorners(gray_data, checkerboard_size, None,
@@ -358,9 +375,9 @@ class CalibrateCamera:
                 bgr_color_img_copy = bgr_color_img.copy()
                 cv2.drawChessboardCorners(bgr_color_img_copy, checkerboard_size, corners_refined,
                                           checkerboard_found)
-                cv2.imshow("ImageWithCorners", bgr_color_img_copy)
-                cv2.waitKey(1000)
-                cv2.destroyAllWindows()
+                # cv2.imshow("ImageWithCorners", bgr_color_img_copy)
+                # cv2.waitKey(1000)
+                # cv2.destroyAllWindows()
 
                 # 获取标定板中心点的坐标
                 center_point_left_up = np.round(corners_refined[27, 0, :]).astype(int)
@@ -374,7 +391,7 @@ class CalibrateCamera:
                                        camera_z / self.camera.intrinsics.fx)
                 camera_y = np.multiply(checkerboard_pix[1] - self.camera.intrinsics.ppy,
                                        camera_z / self.camera.intrinsics.fy)
-                if camera_z <= 0.05:
+                if camera_z <= 0.05 or camera_z >= 0.7:
                     logger.error(f"位置{index:02d} 标定板中心点 相机深度值异常: {camera_z}")
                     continue
 
@@ -388,7 +405,7 @@ class CalibrateCamera:
                 logger.info(f"位置{index:02d} 标定板中心点 相机坐标系: {camera_coord_center_point_position}")
                 # 保存机械臂基坐标系下的中心点坐标
                 robot_base_coord_center_point_position = tool_position + self.checkerboard_offset_from_tool
-                self.measured_pts.append(robot_base_coord_center_point_position)
+                self.measured_pts.append(robot_base_coord_center_point_position.flatten())
                 logger.info(
                     f"位置{index:02d} 标定板中心点 机械臂基坐标系: {robot_base_coord_center_point_position}")
 
@@ -399,15 +416,170 @@ class CalibrateCamera:
         # 执行标定
         self._do_calibrate(data_save_dir=data_save_dir)
 
+    def verify_calibration_by_realsense_camera(self, data_save_dir=None):
+        """
+        通过RealSense相机验证手眼标定结果，支持用户点击图像获取3D坐标
+        优化点：增加错误处理、可视化标记、深度平滑、结果保存和用户提示
+        """
+        if not data_save_dir:
+            logger.error(f"数据保存文件夹未指定")
+            return
+        # ========== 配置与常量定义 ==========
+        camera2robot = np.loadtxt(os.path.join(data_save_dir, 'camera_pose.txt'), delimiter=' ')
+        cam_depth_scale = np.loadtxt(os.path.join(data_save_dir, 'camera_depth_scale.txt'), delimiter=' ')
+
+        SAVE_RESULTS = True  # 是否保存测量结果
+        RESULTS_FILE = os.path.join(data_save_dir, "calibration_verification_results.txt")
+
+        # 存储测量结果
+        measurement_results = []
+
+        # ========== 初始化相机（带错误处理） ==========
+        try:
+            self.camera.connect()
+            # 获取相机内参（优先使用实时获取的内参）
+            # 获取相机内参
+            fx = self.camera.intrinsics.fx
+            fy = self.camera.intrinsics.fy
+            cx = self.camera.intrinsics.ppx
+            cy = self.camera.intrinsics.ppy
+            print(f"相机连接成功 - 内参: fx={fx:.1f}, fy={fy:.1f}, cx={cx:.1f}, cy={cy:.1f}")
+        except Exception as e:
+            print(f"相机初始化失败: {str(e)}")
+            return
+
+        # ========== 鼠标回调函数（增强版） ==========
+        def on_mouse(event, x, y, flags, param):
+            if event == cv2.EVENT_LBUTTONDOWN:
+                # 获取参数
+                rgb = param['rgb']
+                depth = param['aligned_depth']
+                height, width = rgb.shape[:2]
+
+                # 检查点击位置是否在图像范围内
+                if not (0 <= x < width and 0 <= y < height):
+                    print("点击位置超出图像范围")
+                    return
+
+                # 从对齐的深度图获取深度值（注意坐标顺序）
+                depth_value = depth[y, x] * cam_depth_scale
+                depth_value = depth_value[0]
+                if depth_value < 0.1 or depth_value > 0.7:  # 合理深度范围判断
+                    print(f"深度值({depth_value:.3f}m)超出有效范围(0.1-0.7m)")
+                    return
+
+                # 2. 将像素点投影到相机坐标系
+                Xc = (x - cx) * depth_value / fx
+                Yc = (y - cy) * depth_value / fy
+                Zc = depth_value
+                camera_coord = np.array([Xc, Yc, Zc])
+
+                # 转换为齐次坐标
+                camera_coord_homog = np.append(camera_coord, [1]).reshape(4, 1)
+
+                # 转换到机器人基坐标系
+                robot_coord = np.dot(camera2robot, camera_coord_homog)
+                Pbase = robot_coord[:3].flatten()  # 移除齐次坐标
+
+                # 4. 显示和记录结果
+                result_str = (f"像素点: ({x},{y}) → 深度: {depth_value:.3f}m → "
+                              f"相机坐标: X={Xc:.4f}m, Y={Yc:.4f}m, Z={Zc:.4f}m → "
+                              f"基座坐标: X={Pbase[0]:.4f}m, Y={Pbase[1]:.4f}m, Z={Pbase[2]:.4f}m")
+                print(result_str)
+
+                # 记录结果
+                measurement_results.append({
+                    "pixel": (x, y),
+                    "depth": depth_value,
+                    "camera_coords": (Xc, Yc, Zc),
+                    "base_coords": (Pbase[0], Pbase[1], Pbase[2])
+                })
+
+                # 5. 在图像上标记点击点和信息
+                cv2.circle(rgb, (x, y), 5, (0, 0, 255), -1)  # 红色圆点标记
+                cv2.putText(rgb, f"X:{Pbase[0]:.3f}", (x + 10, y),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+                cv2.putText(rgb, f"Y:{Pbase[1]:.3f}", (x + 10, y + 20),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+                cv2.putText(rgb, f"Z:{Pbase[2]:.3f}", (x + 10, y + 40),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+
+        # ========== 主循环（增强版） ==========
+        try:
+            print("\n操作说明:")
+            print("1. 点击图像上的点获取其在机械臂基座坐标系中的坐标")
+            print("2. 按 's' 保存当前测量结果到文件")
+            print("3. 按 'r' 清除所有测量结果")
+            print("4. 按 'ESC' 退出程序")
+
+            while True:
+                # 获取图像
+                images = self.camera.get_image_bundle()
+                if not images or 'rgb' not in images or 'aligned_depth' not in images:
+                    print("获取图像失败，重试...")
+                    continue
+
+                # 转换色彩空间以适应OpenCV显示
+                rgb = cv2.cvtColor(images['rgb'], cv2.COLOR_RGB2BGR)
+                depth = images['aligned_depth']
+
+                # 显示操作提示
+                cv2.putText(rgb, "ESC:exit | s:save | r:clear", (10, 30),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
+
+                # 显示窗口并绑定鼠标事件
+                cv2.imshow('RealSense 标定验证 (点击图像获取坐标)', rgb)
+                cv2.setMouseCallback('RealSense 标定验证 (点击图像获取坐标)',
+                                     on_mouse, param={'rgb': rgb, 'aligned_depth': depth})
+
+                # 处理键盘事件
+                key = cv2.waitKey(1) & 0xFF
+                if key == 27:  # ESC 退出
+                    print("程序退出")
+                    break
+                elif key == ord('s') and SAVE_RESULTS:  # 保存结果
+                    with open(RESULTS_FILE, 'w', encoding='utf-8') as f:
+                        for i, res in enumerate(measurement_results, 1):
+                            f.write(f"测量点 {i}:\n")
+                            f.write(f"  像素坐标: {res['pixel']}\n")
+                            f.write(f"  深度值: {res['depth']:.4f}m\n")
+                            f.write(f"  相机坐标: {res['camera_coords']}\n")
+                            f.write(f"  基座坐标: {res['base_coords']}\n\n")
+                    print(f"已保存 {len(measurement_results)} 个测量结果到 {RESULTS_FILE}")
+                elif key == ord('r'):  # 清除结果
+                    measurement_results.clear()
+                    print("已清除所有测量结果")
+
+        except Exception as e:
+            print(f"程序运行出错: {str(e)}")
+        finally:
+            # 资源清理
+            cv2.destroyAllWindows()
+            print("资源已释放")
+
+            # 自动保存结果（如果有）
+            if SAVE_RESULTS and measurement_results:
+                with open(RESULTS_FILE, 'w') as f:
+                    for i, res in enumerate(measurement_results, 1):
+                        f.write(f"测量点 {i}:\n")
+                        f.write(f"  像素坐标: {res['pixel']}\n")
+                        f.write(f"  深度值: {res['depth']:.4f}m\n")
+                        f.write(f"  相机坐标: {res['camera_coords']}\n")
+                        f.write(f"  基座坐标: {res['base_coords']}\n\n")
+                print(f"自动保存 {len(measurement_results)} 个测量结果到 {RESULTS_FILE}")
+
 
 if __name__ == '__main__':
-    cam_id = 246422072474,
-    calib_grid_step = 0.03
-    # 标定板中心到夹具中心的偏移
-    checkerboard_offset_from_tool = [0.018 * 4, 0.0, 0.0],
-    workspace_limits = np.asarray([[0.25, 0.30], [-0.10, 0.10], [0.05, 0.15]])
+    cam_id = 246422072474
+    checkerboard_offset_from_tool = [0.065, 0.0, 0.0],
+    workspace_limits = np.asarray([[0.30, 0.42], [-0.10, 0.10], [0.02, 0.15]])
+    calib_grid_step = 0.05
     calibrate_camera = CalibrateCamera(cam_id=cam_id,
                                        calib_grid_step=calib_grid_step,
                                        checkerboard_offset_from_tool=checkerboard_offset_from_tool,
                                        workspace_limits=workspace_limits)
-    calibrate_camera.run()
+    # calibrate_camera.run()
+    data_save_dir = r'D:\PycharmProjects\robotic-grasping\calibrate\data\20250819001632'
+    calibrate_camera.run_offline(data_save_dir=data_save_dir)
+
+    calibrate_camera.verify_calibration_by_realsense_camera(data_save_dir=data_save_dir)

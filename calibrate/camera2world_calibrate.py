@@ -275,6 +275,7 @@ class Camera2WorldCalibrate:
                 # 保存深度可视化图
                 depth_visual_img_path = os.path.join(data_save_dir, f'{index:02d}_depth_visual.png')
                 # 深度图预处理：归一化并转换为彩色图（便于可视化）
+                # noinspection PyTypeChecker
                 depth_normalized = cv2.normalize(
                     camera_depth_copy.squeeze(),  # 移除单通道维度
                     None,

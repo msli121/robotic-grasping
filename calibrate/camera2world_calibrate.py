@@ -441,7 +441,36 @@ class Camera2WorldCalibrate:
         cy = self.camera.intrinsics.ppy
         print(f"相机连接成功 - 内参: fx={fx:.1f}, fy={fy:.1f}, cx={cx:.1f}, cy={cy:.1f}")
 
-        # ========== 鼠标回调函数（增强版） ==========
+        def pixel_to_camera_coordinate(x, y, depth):
+            """
+            将像素坐标转换为相机坐标
+            :param x: 像素坐标x
+            :param y: 像素坐标y
+            :param depth: 深度值
+            :return: 相机坐标
+            """
+            # 计算相机坐标
+            Zc = depth
+            Xc = (x - cx) * Zc / fx
+            Yc = (y - cy) * Zc / fy
+            return np.array([Xc, Yc, Zc])
+
+        def camera_to_robot_base(x_c, y_c, z_c):
+            """
+                将相机坐标转换为机械臂基坐标
+                :param x_c: 相机坐标x
+                :param y_c: 相机坐标y
+                :param z_c: 相机坐标z
+                :return: 机械臂基坐标
+            """
+            # 转换为齐次坐标
+            camera_coord_homog = np.append([x_c, y_c, z_c], [1]).reshape(4, 1)
+            # 转换到机器人基坐标系
+            robot_coord = np.dot(camera2robot, camera_coord_homog)
+            robot_base_xyz = robot_coord[:3].flatten()  # 移除齐次坐标
+            return robot_base_xyz
+
+        # ========== 鼠标回调函数 ==========
         def on_mouse(event, x, y, flags, param):
             if event == cv2.EVENT_LBUTTONDOWN:
                 # 获取参数
@@ -454,38 +483,44 @@ class Camera2WorldCalibrate:
                     print("点击位置超出图像范围")
                     return
 
-                # 从对齐的深度图获取深度值（注意坐标顺序）
+                # 1.从对齐的深度图获取深度值（注意坐标顺序）
                 depth_value = depth[y, x] * cam_depth_scale
                 depth_value = depth_value[0]
                 if depth_value < 0.1 or depth_value > 0.7:  # 合理深度范围判断
                     print(f"深度值({depth_value:.3f}m)超出有效范围(0.1-0.7m)")
                     return
-
                 # 2. 将像素点投影到相机坐标系
-                Xc = (x - cx) * depth_value / fx
-                Yc = (y - cy) * depth_value / fy
-                Zc = depth_value
-                camera_coord = np.array([Xc, Yc, Zc])
-
-                # 转换为齐次坐标
-                camera_coord_homog = np.append(camera_coord, [1]).reshape(4, 1)
-
-                # 转换到机器人基坐标系
-                robot_coord = np.dot(camera2robot, camera_coord_homog)
-                robot_base_xyz = robot_coord[:3].flatten()  # 移除齐次坐标
+                camera_xyz = pixel_to_camera_coordinate(x, y, depth_value)
+                # 3. 将相机坐标转换为机械臂基坐标
+                robot_base_xyz = camera_to_robot_base(camera_xyz[0], camera_xyz[1], camera_xyz[2])
 
                 # 4. 显示和记录结果
                 result_str = (f"像素点: ({x},{y}) → 深度: {depth_value:.3f}m → "
-                              f"相机坐标: X={Xc:.4f}m, Y={Yc:.4f}m, Z={Zc:.4f}m → "
-                              f"基座坐标: X={robot_base_xyz[0]:.4f}m, Y={robot_base_xyz[1]:.4f}m, Z={robot_base_xyz[2]:.4f}m")
+                              f"相机坐标(深度缩放): X={camera_xyz[0]:.4f}m, Y={camera_xyz[1]:.4f}m, Z={camera_xyz[2]:.4f}m → "
+                              f"基座坐标(深度缩放): X={robot_base_xyz[0]:.4f}m, Y={robot_base_xyz[1]:.4f}m, Z={robot_base_xyz[2]:.4f}m")
                 print(result_str)
+
+                # 处理未缩放深度值
+                depth_value_origin = depth[y, x]
+                depth_value_origin = depth_value_origin[0]
+                camera_xyz_origin = pixel_to_camera_coordinate(x, y, depth_value_origin)
+                robot_base_xyz_origin = camera_to_robot_base(camera_xyz_origin[0], camera_xyz_origin[1],
+                                                             camera_xyz_origin[2])
+                result_str_origin = (f"像素点: ({x},{y}) → 深度: {depth_value_origin:.3f}m → "
+                                     f"相机坐标(未缩放): X={camera_xyz_origin[0]:.4f}m, Y={camera_xyz_origin[1]:.4f}m, Z={camera_xyz_origin[2]:.4f}m → "
+                                     f"基座坐标(未缩放): X={robot_base_xyz_origin[0]:.4f}m, Y={robot_base_xyz_origin[1]:.4f}m, Z={robot_base_xyz_origin[2]:.4f}m")
+                print(result_str_origin)
 
                 # 记录结果
                 measurement_results.append({
                     "pixel": (x, y),
                     "depth": depth_value,
-                    "camera_coords": (Xc, Yc, Zc),
-                    "base_coords": (robot_base_xyz[0], robot_base_xyz[1], robot_base_xyz[2])
+                    "camera_coords": (camera_xyz[0], camera_xyz[1], camera_xyz[2]),
+                    "base_coords": (robot_base_xyz[0], robot_base_xyz[1], robot_base_xyz[2]),
+                    "depth_origin": depth_value_origin,
+                    "camera_coords_origin": (camera_xyz_origin[0], camera_xyz_origin[1], camera_xyz_origin[2]),
+                    "base_coords_origin": (
+                    robot_base_xyz_origin[0], robot_base_xyz_origin[1], robot_base_xyz_origin[2]),
                 })
 
                 # 5. 在图像上标记点击点和信息
@@ -521,8 +556,8 @@ class Camera2WorldCalibrate:
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
 
                 # 显示窗口并绑定鼠标事件
-                cv2.imshow('RealSense 标定验证 (点击图像获取坐标)', rgb)
-                cv2.setMouseCallback('RealSense 标定验证 (点击图像获取坐标)',
+                cv2.imshow('VerifyCalibration', rgb)
+                cv2.setMouseCallback('VerifyCalibration',
                                      on_mouse, param={'rgb': rgb, 'aligned_depth': depth})
 
                 # 处理键盘事件
@@ -537,7 +572,10 @@ class Camera2WorldCalibrate:
                             f.write(f"  像素坐标: {res['pixel']}\n")
                             f.write(f"  深度值: {res['depth']:.4f}m\n")
                             f.write(f"  相机坐标: {res['camera_coords']}\n")
-                            f.write(f"  基座坐标: {res['base_coords']}\n\n")
+                            f.write(f"  基座坐标: {res['base_coords']}\n")
+                            f.write(f"  深度值(未缩放): {res['depth_origin']:.4f}m\n")
+                            f.write(f"  相机坐标(未缩放): {res['camera_coords_origin']}\n")
+                            f.write(f"  基座坐标(未缩放): {res['base_coords_origin']}\n\n")
                     print(f"已保存 {len(measurement_results)} 个测量结果到 {save_verify_results_file}")
                 elif key == ord('r'):  # 清除结果
                     measurement_results.clear()
@@ -549,8 +587,7 @@ class Camera2WorldCalibrate:
             # 资源清理
             cv2.destroyAllWindows()
             print("资源已释放")
-
-            # 自动保存结果（如果有）
+            # 自动保存结果
             if save_verify_results and measurement_results:
                 with open(save_verify_results_file, 'w') as f:
                     for i, res in enumerate(measurement_results, 1):
@@ -558,7 +595,10 @@ class Camera2WorldCalibrate:
                         f.write(f"  像素坐标: {res['pixel']}\n")
                         f.write(f"  深度值: {res['depth']:.4f}m\n")
                         f.write(f"  相机坐标: {res['camera_coords']}\n")
-                        f.write(f"  基座坐标: {res['base_coords']}\n\n")
+                        f.write(f"  基座坐标: {res['base_coords']}\n")
+                        f.write(f"  深度值(未缩放): {res['depth_origin']:.4f}m\n")
+                        f.write(f"  相机坐标(未缩放): {res['camera_coords_origin']}\n")
+                        f.write(f"  基座坐标(未缩放): {res['base_coords_origin']}\n\n")
                 print(f"自动保存 {len(measurement_results)} 个测量结果到 {save_verify_results_file}")
 
 

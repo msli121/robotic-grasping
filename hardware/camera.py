@@ -5,9 +5,11 @@ import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 import pyrealsense2 as rs
+from matplotlib import cm
 from scipy import ndimage
 from sklearn.neighbors import NearestNeighbors
 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 
@@ -52,7 +54,7 @@ class RealSenseCamera:
         # Determine depth scale
         self.scale = cfg.get_device().first_depth_sensor().get_depth_scale()
 
-    def get_image_bundle(self, fill_depth=False, fill_method='opencv'):
+    def get_image_bundle(self, fill_depth=True, fill_method='opencv'):
         """
         获取图像包
 
@@ -170,7 +172,7 @@ class RealSenseCamera:
         # 7. 只替换原始缺失的区域，保留有效深度值
         result = np.where(np.isnan(depth_map), filled_depth, depth_map)
 
-        logger.debug(f"深度图填充耗时: {time.time() - start_time:.4f}秒")
+        logger.debug(f"opencv 深度图填充耗时: {time.time() - start_time:.4f}秒")
         return result
 
     def _fill_depth_bilateral(self, depth_map: np.ndarray, iterations: int = 3) -> np.ndarray:
@@ -262,11 +264,78 @@ class RealSenseCamera:
         return filled
 
 
+def test_depth_fill_methods(depth_npy_path):
+    """
+    测试并可视化四种深度图填充方法的效果
+    :param depth_npy_path: 深度图npy文件路径（如/xxx/00_depth_raw.npy）
+    """
+
+    cam = RealSenseCamera(device_id=0)  # device_id可任意填写
+
+    # 1. 加载深度数据并预处理
+    depth_data = np.load(depth_npy_path)  # 形状为[H, W, 1]
+    depth_2d = np.squeeze(depth_data)  # 转为[H, W]
+    logger.info(f"加载深度图: {depth_npy_path}, 形状: {depth_2d.shape}")
+
+    # 模拟原始数据中的无效值（0值转为NaN，与相机输出一致）
+    depth_original = depth_2d.copy()
+    depth_original[depth_original <= 0] = np.nan  # 无效深度设为NaN
+
+    # 2. 准备填充方法列表
+    fill_methods = [
+        ("Origin", None),  # 原图不填充
+        ("OpenCV Telea", cam._fill_depth_opencv),
+        ("bilateral", cam._fill_depth_bilateral),
+        ("weighted", cam._fill_depth_weighted),
+        ("median", cam._fill_depth_median)
+    ]
+
+    # 3. 对每种方法进行填充处理
+    results = []
+    for name, method in fill_methods:
+        if method is None:
+            # 原始图直接添加
+            results.append((name, depth_original))
+        else:
+            # 复制数据避免修改原图
+            depth_copy = depth_original.copy()
+            # 调用填充方法
+            filled = method(depth_copy)
+            results.append((name, filled))
+
+    # 4. 计算统一的显示范围（基于原始有效深度值）
+    valid_depth = depth_original[~np.isnan(depth_original)]
+    if len(valid_depth) == 0:
+        logger.error("深度图中无有效数据，无法计算显示范围")
+        return
+    vmin, vmax = np.percentile(valid_depth, [5, 95])  # 去除极端值影响
+
+    # 5. 可视化对比
+    plt.figure(figsize=(20, 4))  # 宽屏布局，1行5列
+    for i, (name, depth_img) in enumerate(results):
+        plt.subplot(1, 5, i + 1)
+        # 显示深度图（用jet颜色映射增强对比度）
+        im = plt.imshow(depth_img, cmap=cm.jet, vmin=vmin, vmax=vmax)
+        plt.title(name, fontsize=10)
+        plt.axis('off')  # 关闭坐标轴
+
+    # 添加共用颜色条
+    cbar_ax = plt.gcf().add_axes([0.92, 0.15, 0.01, 0.7])  # 位置[左,下,宽,高]
+    plt.colorbar(im, cax=cbar_ax, label='depth/m')
+
+    plt.tight_layout(rect=[0, 0, 0.9, 1])  # 预留颜色条位置
+    plt.suptitle('depth fill methods', y=1.02, fontsize=12)
+    plt.show()
+
+
 if __name__ == '__main__':
-    cam = RealSenseCamera(device_id=246422072474)
-    cam.connect()
-    K, dist = cam.get_K_and_dist()
-    print("内参矩阵:", K)
-    print("畸变系数:", dist)
-    while True:
-        cam.plot_image_bundle()
+    # cam = RealSenseCamera(device_id=246422072474)
+    # cam.connect()
+    # K, dist = cam.get_K_and_dist()
+    # print("内参矩阵:", K)
+    # print("畸变系数:", dist)
+    # while True:
+    #     cam.plot_image_bundle()
+
+    depth_data_file = "/Users/a123/PycharmProjects/robotic-grasping/calibrate/data/20250819001632/00_depth_raw.npy"
+    test_depth_fill_methods(depth_data_file)

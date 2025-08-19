@@ -25,6 +25,8 @@ class RealSenseCamera:
         self.pipeline = None
         self.scale = None
         self.intrinsics = None
+        self.K = None
+        self.dist = None
 
     def connect(self):
         # Start and configure
@@ -38,6 +40,14 @@ class RealSenseCamera:
         # Determine intrinsics
         rgb_profile = cfg.get_stream(rs.stream.color)
         self.intrinsics = rgb_profile.as_video_stream_profile().get_intrinsics()
+
+        # 构造内参矩阵
+        self.K = np.array([[self.intrinsics.fx, 0, self.intrinsics.ppx],
+                           [0, self.intrinsics.fy, self.intrinsics.ppy],
+                           [0, 0, 1]])
+        # 构造畸变系数矩阵
+        self.dist = np.array([self.intrinsics.coeffs[0], self.intrinsics.coeffs[1], self.intrinsics.coeffs[2],
+                              self.intrinsics.coeffs[3], self.intrinsics.coeffs[4]])
 
         # Determine depth scale
         self.scale = cfg.get_device().first_depth_sensor().get_depth_scale()
@@ -102,12 +112,13 @@ class RealSenseCamera:
         获取相机内参矩阵
         :return: 内参矩阵K
         """
-        # 构造矩阵形式
-        K = np.array([[self.intrinsics.fx, 0, self.intrinsics.ppx],
-                      [0, self.intrinsics.fy, self.intrinsics.ppy],
-                      [0, 0, 1]])
-        dist = np.array(self.intrinsics.coeffs)
-        return K, dist
+        return self.K, self.dist
+
+    def set_K(self, K):
+        self.K = K
+
+    def set_dist(self, dist):
+        self.dist = dist
 
     def _fill_depth_opencv(self, depth_map: np.ndarray) -> np.ndarray:
         """

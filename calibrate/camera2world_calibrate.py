@@ -58,6 +58,44 @@ class Camera2WorldCalibrate:
         self.camera2world = np.eye(4)
 
     @staticmethod
+    def pixel_to_camera_coordinate(x, y, depth, K):
+        """
+        将像素坐标转换为相机坐标
+        :param x: 像素坐标x
+        :param y: 像素坐标y
+        :param depth: 深度值
+        :param K: 相机内参矩阵
+        :return: 相机坐标
+        """
+        fx = K[0, 0]
+        fy = K[1, 1]
+        cx = K[0, 2]
+        cy = K[1, 2]
+
+        # 计算相机坐标
+        Zc = depth
+        Xc = (x - cx) * Zc / fx
+        Yc = (y - cy) * Zc / fy
+        return np.array([Xc, Yc, Zc])
+
+    @staticmethod
+    def camera_to_robot_coordinate(x_c, y_c, z_c, camera2world):
+        """
+            将相机坐标转换为机械臂基坐标
+            :param x_c: 相机坐标x
+            :param y_c: 相机坐标y
+            :param z_c: 相机坐标z
+            :param camera2world: 相机到机械臂基坐标系的变换矩阵 4*4
+            :return: 机械臂基坐标
+        """
+        # 转换为齐次坐标
+        camera_coord_homog = np.append([x_c, y_c, z_c], [1]).reshape(4, 1)
+        # 转换到机器人基坐标系
+        robot_coord = np.dot(camera2world, camera_coord_homog)
+        robot_base_xyz = robot_coord[:3].flatten()  # 移除齐次坐标
+        return robot_base_xyz
+
+    @staticmethod
     def _get_rigid_transform(A, B):
         """
         Estimate rigid transform with SVD (from Nghia Ho)
@@ -89,6 +127,45 @@ class Camera2WorldCalibrate:
         t = np.dot(-R, centroid_A.T) + centroid_B.T
         return R, t
 
+    @staticmethod
+    def _get_rigid_transform_optimized(A, B):
+        """优化的刚性变换计算（带归一化处理）"""
+        assert len(A) == len(B)
+        N = A.shape[0]
+
+        # 计算质心
+        centroid_A = np.mean(A, axis=0)
+        centroid_B = np.mean(B, axis=0)
+
+        # 去质心
+        AA = A - np.tile(centroid_A, (N, 1))
+        BB = B - np.tile(centroid_B, (N, 1))
+
+        # 归一化处理
+        std_A = np.std(AA)
+        std_B = np.std(BB)
+
+        if std_A > 1e-6:
+            AA = AA / std_A
+        if std_B > 1e-6:
+            BB = BB / std_B
+
+        # SVD求解
+        H = np.dot(np.transpose(AA), BB)
+        U, S, Vt = np.linalg.svd(H)
+        R = np.dot(Vt.T, U.T)
+
+        # 修正反射问题
+        if np.linalg.det(R) < 0:
+            Vt[2, :] *= -1
+            R = np.dot(Vt.T, U.T)
+
+        # 计算平移向量（还原归一化影响）
+        scale_factor = std_B / std_A if std_A > 1e-6 else 1.0
+        t = np.dot(-R, centroid_A.T * scale_factor) + centroid_B.T
+
+        return R, t
+
     def _get_rigid_transform_error(self, z_scale=1):
         """
         Calculate the rigid transform RMS error
@@ -96,20 +173,18 @@ class Camera2WorldCalibrate:
         :param z_scale: 相机深度缩放因子
         :return RMS error
         """
-        # 计算修正后的z坐标
-        observed_z = np.squeeze(self.observed_pts[:, 2:] * z_scale)
-        # 重新计算x坐标：(像素u - 主点x) * 修正后的z / 焦距x
-        observed_x = np.multiply(np.squeeze(self.observed_pix[:, [0]]) - self.camera.intrinsics.ppx,
-                                 observed_z / self.camera.intrinsics.fx)
-        # 重新计算y坐标：(像素v - 主点y) * 修正后的z / 焦距y
-        observed_y = np.multiply(np.squeeze(self.observed_pix[:, [1]]) - self.camera.intrinsics.ppy,
-                                 observed_z / self.camera.intrinsics.fy)
+        fx = self.camera.K[0, 0]
+        fy = self.camera.K[1, 1]
+        cx = self.camera.K[0, 2]
+        cy = self.camera.K[1, 2]
 
+        observed_z = np.squeeze(self.observed_pts[:, 2:] * z_scale)
+        observed_x = np.multiply(np.squeeze(self.observed_pix[:, [0]]) - cx, observed_z / fx)
+        observed_y = np.multiply(np.squeeze(self.observed_pix[:, [1]]) - cy, observed_z / fy)
         new_observed_pts = np.asarray([observed_x, observed_y, observed_z]).T
 
         # 用修正后的相机点集和机械臂真实点集，求解旋转矩阵R和平移向量t
         R, t = self._get_rigid_transform(np.asarray(new_observed_pts), np.asarray(self.measured_pts))
-        # 构建4x4的相机到机械臂的变换矩阵camera2world
         t.shape = (3, 1)
         self.camera2world = np.concatenate((np.concatenate((R, t), axis=1), np.array([[0, 0, 0, 1]])), axis=0)
 
@@ -119,29 +194,6 @@ class Camera2WorldCalibrate:
         error = np.sum(np.multiply(error, error))
         rmse = np.sqrt(error / new_observed_pts.shape[0])
         return rmse
-
-    def _generate_grid(self):
-        """
-        Construct 3D calibration grid across workspace
-        生成机械臂工作空间中的3D网格点
-        :return calibration grid points
-        """
-        # 将计算出的样本数量转换为整数
-        x_num = int(np.ceil(1 + (self.workspace_limits[0][1] - self.workspace_limits[0][0]) / self.calib_grid_step))
-        y_num = int(np.ceil(1 + (self.workspace_limits[1][1] - self.workspace_limits[1][0]) / self.calib_grid_step))
-        z_num = int(np.ceil(1 + (self.workspace_limits[2][1] - self.workspace_limits[2][0]) / self.calib_grid_step))
-
-        gridspace_x = np.linspace(self.workspace_limits[0][0], self.workspace_limits[0][1], x_num)
-        gridspace_y = np.linspace(self.workspace_limits[1][0], self.workspace_limits[1][1], y_num)
-        gridspace_z = np.linspace(self.workspace_limits[2][0], self.workspace_limits[2][1], z_num)
-
-        calib_grid_x, calib_grid_y, calib_grid_z = np.meshgrid(gridspace_x, gridspace_y, gridspace_z)
-        num_calib_grid_pts = calib_grid_x.shape[0] * calib_grid_x.shape[1] * calib_grid_x.shape[2]
-        calib_grid_x.shape = (num_calib_grid_pts, 1)
-        calib_grid_y.shape = (num_calib_grid_pts, 1)
-        calib_grid_z.shape = (num_calib_grid_pts, 1)
-        calib_grid_pts = np.concatenate((calib_grid_x, calib_grid_y, calib_grid_z), axis=1)
-        return calib_grid_pts
 
     def _do_calibrate(self, data_save_dir=None):
         """
@@ -164,10 +216,14 @@ class Camera2WorldCalibrate:
         # 通过最小化误差来标定相机深度偏移
         logger.info('点位信息收集完毕，开始执行标定...')
         z_scale_init = 1
-        optim_result = optimize.minimize(self._get_rigid_transform_error, np.asarray(z_scale_init),
-                                         method='Nelder-Mead')
+        optim_result = optimize.minimize(
+            self._get_rigid_transform_error,
+            np.asarray(z_scale_init),
+            bounds=[(0.9, 1.1)],  # 添加参数范围约束
+            method='Nelder-Mead'
+        )
         camera_depth_offset = optim_result.x
-        logger.info(f'标定结束，最优深度缩放系数为: {camera_depth_offset}')
+        logger.info(f'最优深度缩放系数为: {camera_depth_offset}')
 
         # 保存标定结果
         logger.info('开始保存结果...')
@@ -180,6 +236,42 @@ class Camera2WorldCalibrate:
         np.savetxt(camera_pose_file, self.camera2world, delimiter=' ')
         logger.info(f'相机坐标系到机械臂坐标系变换矩阵 保存路径: {os.path.abspath(camera_pose_file)}')
         logger.info('标定完成！！！')
+
+        logger.info('\n\n\n抽点验证.....')
+        camera_xyz = [-0.07858375, 0.05055205, 0.52400005]
+        # 机械臂基坐标系: [0.3650015 0.0999999 0.0633336]
+        robot_xyz = [0.3650015, 0.0999999, 0.0633336]
+        robot_base_xyz_origin = Camera2WorldCalibrate.camera_to_robot_coordinate(camera_xyz[0],
+                                                                                 camera_xyz[1],
+                                                                                 camera_xyz[2],
+                                                                                 self.camera2world)
+        logger.info(f'相机坐标系到机械臂坐标系变换矩阵: {self.camera2world}')
+        logger.info(f'相机坐标系下的点: {camera_xyz}')
+        logger.info(f'机械臂基坐标系（计算前）: {robot_xyz}')
+        logger.info(f'机械臂坐标系下的点(计算后): {robot_base_xyz_origin}')
+
+    def _generate_grid(self):
+        """
+        Construct 3D calibration grid across workspace
+        生成机械臂工作空间中的3D网格点
+        :return calibration grid points
+        """
+        # 将计算出的样本数量转换为整数
+        x_num = int(np.round(1 + (self.workspace_limits[0][1] - self.workspace_limits[0][0]) / self.calib_grid_step))
+        y_num = int(np.round(1 + (self.workspace_limits[1][1] - self.workspace_limits[1][0]) / self.calib_grid_step))
+        z_num = int(np.round(1 + (self.workspace_limits[2][1] - self.workspace_limits[2][0]) / self.calib_grid_step))
+
+        gridspace_x = np.linspace(self.workspace_limits[0][0], self.workspace_limits[0][1], x_num)
+        gridspace_y = np.linspace(self.workspace_limits[1][0], self.workspace_limits[1][1], y_num)
+        gridspace_z = np.linspace(self.workspace_limits[2][0], self.workspace_limits[2][1], z_num)
+
+        calib_grid_x, calib_grid_y, calib_grid_z = np.meshgrid(gridspace_x, gridspace_y, gridspace_z)
+        num_calib_grid_pts = calib_grid_x.shape[0] * calib_grid_x.shape[1] * calib_grid_x.shape[2]
+        calib_grid_x.shape = (num_calib_grid_pts, 1)
+        calib_grid_y.shape = (num_calib_grid_pts, 1)
+        calib_grid_z.shape = (num_calib_grid_pts, 1)
+        calib_grid_pts = np.concatenate((calib_grid_x, calib_grid_y, calib_grid_z), axis=1)
+        return calib_grid_pts
 
     def run(self):
         logging.info('开始执行标定任务...')
@@ -358,6 +450,7 @@ class Camera2WorldCalibrate:
         fy = K[1, 1]
         cx = K[0, 2]
         cy = K[1, 2]
+        self.camera.set_K(K)
 
         # 加载数据
         rgb_files = sorted(glob.glob(os.path.join(data_save_dir, '*origin_rgb.png')))
@@ -402,7 +495,7 @@ class Camera2WorldCalibrate:
                 center_point_left_up = np.round(corners_refined[27, 0, :]).astype(int)
                 center_point_right_down = np.round(corners_refined[36, 0, :]).astype(int)
                 checkerboard_pix = (center_point_left_up + center_point_right_down) // 2
-                logger.info(f"位置{index:02d} 标定板中心点 像素坐标系: {checkerboard_pix}")
+                # logger.info(f"位置{index:02d} 标定板中心点 像素坐标系: {checkerboard_pix}")
 
                 # 像素坐标转相机坐标
                 camera_z = depth_img[checkerboard_pix[1]][checkerboard_pix[0]]
@@ -442,7 +535,8 @@ class Camera2WorldCalibrate:
             logger.error(f"数据保存文件夹未指定")
             return
         # ========== 读取标定结果 ==========
-        camera2robot = np.loadtxt(os.path.join(data_save_dir, 'camera_pose.txt'), delimiter=' ')
+        camera2world = np.loadtxt(os.path.join(data_save_dir, 'camera_pose.txt'), delimiter=' ')
+        self.camera2world = camera2world
         cam_depth_scale = np.loadtxt(os.path.join(data_save_dir, 'camera_depth_scale.txt'), delimiter=' ')
 
         save_verify_results = True  # 是否保存测量结果
@@ -453,41 +547,7 @@ class Camera2WorldCalibrate:
 
         # ========== 初始化相机 ==========
         self.camera.connect()
-        # 获取相机内参
-        fx = self.camera.intrinsics.fx
-        fy = self.camera.intrinsics.fy
-        cx = self.camera.intrinsics.ppx
-        cy = self.camera.intrinsics.ppy
-        print(f"相机连接成功 - 内参: fx={fx:.1f}, fy={fy:.1f}, cx={cx:.1f}, cy={cy:.1f}")
-
-        def pixel_to_camera_coordinate(x, y, depth):
-            """
-            将像素坐标转换为相机坐标
-            :param x: 像素坐标x
-            :param y: 像素坐标y
-            :param depth: 深度值
-            :return: 相机坐标
-            """
-            # 计算相机坐标
-            Zc = depth
-            Xc = (x - cx) * Zc / fx
-            Yc = (y - cy) * Zc / fy
-            return np.array([Xc, Yc, Zc])
-
-        def camera_to_robot_base(x_c, y_c, z_c):
-            """
-                将相机坐标转换为机械臂基坐标
-                :param x_c: 相机坐标x
-                :param y_c: 相机坐标y
-                :param z_c: 相机坐标z
-                :return: 机械臂基坐标
-            """
-            # 转换为齐次坐标
-            camera_coord_homog = np.append([x_c, y_c, z_c], [1]).reshape(4, 1)
-            # 转换到机器人基坐标系
-            robot_coord = np.dot(camera2robot, camera_coord_homog)
-            robot_base_xyz = robot_coord[:3].flatten()  # 移除齐次坐标
-            return robot_base_xyz
+        print(f"相机连接成功!")
 
         # ========== 鼠标回调函数 ==========
         def on_mouse(event, x, y, flags, param):
@@ -509,9 +569,10 @@ class Camera2WorldCalibrate:
                     print(f"深度值({depth_value:.3f}m)超出有效范围(0.1-0.7m)")
                     return
                 # 2. 将像素点投影到相机坐标系
-                camera_xyz = pixel_to_camera_coordinate(x, y, depth_value)
+                camera_xyz = Camera2WorldCalibrate.pixel_to_camera_coordinate(x, y, depth_value, self.camera.K)
                 # 3. 将相机坐标转换为机械臂基坐标
-                robot_base_xyz = camera_to_robot_base(camera_xyz[0], camera_xyz[1], camera_xyz[2])
+                robot_base_xyz = Camera2WorldCalibrate.camera_to_robot_coordinate(camera_xyz[0], camera_xyz[1],
+                                                                                  camera_xyz[2], self.camera2world)
 
                 # 4. 显示和记录结果
                 result_str = (f"像素点: ({x},{y}) → 深度: {depth_value:.3f}m → "
@@ -522,9 +583,12 @@ class Camera2WorldCalibrate:
                 # 处理未缩放深度值
                 depth_value_origin = depth[y, x]
                 depth_value_origin = depth_value_origin[0]
-                camera_xyz_origin = pixel_to_camera_coordinate(x, y, depth_value_origin)
-                robot_base_xyz_origin = camera_to_robot_base(camera_xyz_origin[0], camera_xyz_origin[1],
-                                                             camera_xyz_origin[2])
+                camera_xyz_origin = Camera2WorldCalibrate.pixel_to_camera_coordinate(x, y, depth_value_origin,
+                                                                                     self.camera.K)
+                robot_base_xyz_origin = Camera2WorldCalibrate.camera_to_robot_coordinate(camera_xyz_origin[0],
+                                                                                         camera_xyz_origin[1],
+                                                                                         camera_xyz_origin[2],
+                                                                                         self.camera2world)
                 result_str_origin = (f"像素点: ({x},{y}) → 深度: {depth_value_origin:.3f}m → "
                                      f"相机坐标(未缩放): X={camera_xyz_origin[0]:.4f}m, Y={camera_xyz_origin[1]:.4f}m, Z={camera_xyz_origin[2]:.4f}m → "
                                      f"基座坐标(未缩放): X={robot_base_xyz_origin[0]:.4f}m, Y={robot_base_xyz_origin[1]:.4f}m, Z={robot_base_xyz_origin[2]:.4f}m")
@@ -624,14 +688,14 @@ class Camera2WorldCalibrate:
 if __name__ == '__main__':
     cam_id = 246422072474
     checkerboard_offset_from_tool = [0.065, 0.0, 0.0]
-    workspace_limits = np.asarray([[0.30, 0.42], [-0.10, 0.10], [0.02, 0.15]])
+    workspace_limits = np.asarray([[0.30, 0.40], [-0.10, 0.10], [0.05, 0.20]])
     calib_grid_step = 0.05
     calibrate_camera = Camera2WorldCalibrate(cam_id=cam_id,
                                              calib_grid_step=calib_grid_step,
                                              checkerboard_offset_from_tool=checkerboard_offset_from_tool,
                                              workspace_limits=workspace_limits)
     # calibrate_camera.run()
-    # data_save_dir = r'D:\PycharmProjects\robotic-grasping\calibrate\data\20250819001632'
-    # calibrate_camera.run_offline(data_save_dir=data_save_dir)
+    data_save_dir = r'/Users/a123/PycharmProjects/robotic-grasping/calibrate/data/20250819001632'
+    calibrate_camera.run_offline(data_save_dir=data_save_dir, max_img_num=60)
 
     # calibrate_camera.verify_calibration_by_realsense_camera(data_save_dir=data_save_dir)

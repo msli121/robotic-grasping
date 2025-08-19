@@ -184,6 +184,11 @@ class Camera2WorldCalibrate:
     def run(self):
         logging.info('开始执行标定任务...')
 
+        # 标定照片保存的文件夹
+        current_time = time.strftime("%Y%m%d%H%M%S", time.localtime())
+        data_save_dir = os.path.join(BASE_DIR, 'data', current_time)
+        os.makedirs(data_save_dir, exist_ok=True)
+
         # 计算空间坐标点
         calib_grid_pts = self._generate_grid()
         logger.info(f'工作空间总点数: {calib_grid_pts.shape[0]}')
@@ -194,6 +199,18 @@ class Camera2WorldCalibrate:
         K, dist = self.camera.get_K_and_dist()
         logger.info(f"相机内参: {K}")
         logger.info(f"相机畸变系数: {dist}")
+        # 保存相机内参
+        camera_intrinsics_file = os.path.join(data_save_dir, f'camera_intrinsics.txt')
+        np.savetxt(camera_intrinsics_file, K, delimiter=' ')
+        logger.info(f'相机内参 保存路径: {os.path.abspath(camera_intrinsics_file)}')
+        # 保存相机畸变系数
+        camera_distortion_file = os.path.join(data_save_dir, f'camera_distortion.txt')
+        np.savetxt(camera_distortion_file, dist, delimiter=' ')
+        logger.info(f'相机畸变系数 保存路径: {os.path.abspath(camera_distortion_file)}')
+        fx = K[0, 0]
+        fy = K[1, 1]
+        cx = K[0, 2]
+        cy = K[1, 2]
 
         # 连接机器人
         logger.info(f"开始连接机器人...")
@@ -203,11 +220,6 @@ class Camera2WorldCalibrate:
         self.robot.send_position(home_position)
         # 等待机械臂到达指定位置
         time.sleep(2)
-
-        # 标定照片保存的文件夹
-        current_time = time.strftime("%Y%m%d%H%M%S", time.localtime())
-        data_save_dir = os.path.join(BASE_DIR, 'data', current_time)
-        os.makedirs(data_save_dir, exist_ok=True)
 
         for index, tool_position in enumerate(calib_grid_pts):
             # 用tool_position替换home_position的前三个元素，并且乘以1000
@@ -292,10 +304,8 @@ class Camera2WorldCalibrate:
 
                 # 像素坐标转相机坐标
                 camera_z = camera_depth_img[checkerboard_pix[1]][checkerboard_pix[0]]
-                camera_x = np.multiply(checkerboard_pix[0] - self.camera.intrinsics.ppx,
-                                       camera_z / self.camera.intrinsics.fx)
-                camera_y = np.multiply(checkerboard_pix[1] - self.camera.intrinsics.ppy,
-                                       camera_z / self.camera.intrinsics.fy)
+                camera_x = np.multiply(checkerboard_pix[0] - cx, camera_z / fx)
+                camera_y = np.multiply(checkerboard_pix[1] - cy, camera_z / fy)
                 if camera_z <= 0.05:
                     logger.error(f"位置{index:02d} 标定板中心点 相机深度值异常: {camera_z}")
                     continue
@@ -332,12 +342,22 @@ class Camera2WorldCalibrate:
             logger.error('请输入数据保存目录')
             return
 
-        # 连接相机
-        self.camera.connect()
-        logger.info(f"相机连接成功...")
-        K, dist = self.camera.get_K_and_dist()
-        logger.info(f"相机内参: {K}")
-        logger.info(f"相机畸变系数: {dist}")
+        # 读取相机内参
+        camera_intrinsics_file = os.path.join(data_save_dir, f'camera_intrinsics.txt')
+        if not os.path.exists(camera_intrinsics_file):
+            logger.error(f'相机内参文件不存在: {camera_intrinsics_file}')
+            return
+        K = np.loadtxt(camera_intrinsics_file, delimiter=' ')
+        # # 连接相机
+        # self.camera.connect()
+        # logger.info(f"相机连接成功...")
+        # K, dist = self.camera.get_K_and_dist()
+        # logger.info(f"相机内参: {K}")
+        # logger.info(f"相机畸变系数: {dist}")
+        fx = K[0, 0]
+        fy = K[1, 1]
+        cx = K[0, 2]
+        cy = K[1, 2]
 
         # 加载数据
         rgb_files = sorted(glob.glob(os.path.join(data_save_dir, '*origin_rgb.png')))
@@ -386,10 +406,8 @@ class Camera2WorldCalibrate:
 
                 # 像素坐标转相机坐标
                 camera_z = depth_img[checkerboard_pix[1]][checkerboard_pix[0]]
-                camera_x = np.multiply(checkerboard_pix[0] - self.camera.intrinsics.ppx,
-                                       camera_z / self.camera.intrinsics.fx)
-                camera_y = np.multiply(checkerboard_pix[1] - self.camera.intrinsics.ppy,
-                                       camera_z / self.camera.intrinsics.fy)
+                camera_x = np.multiply(checkerboard_pix[0] - cx, camera_z / fx)
+                camera_y = np.multiply(checkerboard_pix[1] - cy, camera_z / fy)
                 if camera_z <= 0.05 or camera_z >= 0.7:
                     logger.error(f"位置{index:02d} 标定板中心点 相机深度值异常: {camera_z}")
                     continue
@@ -521,7 +539,7 @@ class Camera2WorldCalibrate:
                     "depth_origin": depth_value_origin,
                     "camera_coords_origin": (camera_xyz_origin[0], camera_xyz_origin[1], camera_xyz_origin[2]),
                     "base_coords_origin": (
-                    robot_base_xyz_origin[0], robot_base_xyz_origin[1], robot_base_xyz_origin[2]),
+                        robot_base_xyz_origin[0], robot_base_xyz_origin[1], robot_base_xyz_origin[2]),
                 })
 
                 # 5. 在图像上标记点击点和信息
@@ -612,7 +630,7 @@ if __name__ == '__main__':
                                              calib_grid_step=calib_grid_step,
                                              checkerboard_offset_from_tool=checkerboard_offset_from_tool,
                                              workspace_limits=workspace_limits)
-    calibrate_camera.run()
+    # calibrate_camera.run()
     # data_save_dir = r'D:\PycharmProjects\robotic-grasping\calibrate\data\20250819001632'
     # calibrate_camera.run_offline(data_save_dir=data_save_dir)
 

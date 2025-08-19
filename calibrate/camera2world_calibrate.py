@@ -9,6 +9,7 @@
 # @Date       : 2025/8/16 17:39
 import glob
 import logging
+import colorlog
 import os
 import time
 
@@ -21,12 +22,43 @@ from scipy import optimize
 from hardware.camera import RealSenseCamera
 from robot.densor_robot import DensorRobot
 
-# 配置日志
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+
+# 配置日志（支持彩色显示）
+def setup_logger():
+    # 定义日志颜色（不同级别对应不同颜色）
+    log_colors = {
+        'DEBUG': 'cyan',  # 调试：青色
+        'INFO': 'green',  # 信息：绿色
+        'WARNING': 'yellow',  # 警告：黄色
+        'ERROR': 'red',  # 错误：红色
+        'CRITICAL': 'bold_red',  # 严重错误：粗体红色
+    }
+
+    # 定义日志格式（包含颜色和原有格式）
+    formatter = colorlog.ColoredFormatter(
+        fmt='%(log_color)s%(asctime)s - %(levelname)s - %(message)s',  # 保留原有格式，添加%(log_color)s
+        log_colors=log_colors,
+        datefmt='%Y-%m-%d %H:%M:%S'  # 时间格式细化（可选）
+    )
+
+    # 创建控制台处理器并应用格式
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(formatter)
+
+    # 获取logger实例并配置
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.INFO)  # 日志级别保持INFO
+    logger.addHandler(console_handler)
+
+    # 避免重复输出（清除已有处理器）
+    if len(logger.handlers) > 1:
+        logger.handlers = [logger.handlers[-1]]
+
+    return logger
+
+
+# 初始化日志
+logger = setup_logger()
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -398,7 +430,7 @@ class Camera2WorldCalibrate:
                 camera_z = camera_depth_img[checkerboard_pix[1]][checkerboard_pix[0]]
                 camera_x = np.multiply(checkerboard_pix[0] - cx, camera_z / fx)
                 camera_y = np.multiply(checkerboard_pix[1] - cy, camera_z / fy)
-                if camera_z <= 0.05:
+                if camera_z <= 0.05 or camera_z >= 0.8:
                     logger.error(f"位置{index:02d} 标定板中心点 相机深度值异常: {camera_z}")
                     continue
 

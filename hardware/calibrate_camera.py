@@ -27,7 +27,7 @@ class Calibration:
         self.workspace_limits = workspace_limits
 
         self.camera = RealSenseCamera(device_id=cam_id)
-        
+
         self.measured_pts = []
         self.observed_pts = []
         self.observed_pix = []
@@ -107,7 +107,7 @@ class Calibration:
         calib_grid_z.shape = (num_calib_grid_pts, 1)
         calib_grid_pts = np.concatenate((calib_grid_x, calib_grid_y, calib_grid_z), axis=1)
         return calib_grid_pts
-        
+
     def run(self):
         # Connect to camera
         self.camera.connect()
@@ -174,7 +174,8 @@ class Calibration:
         # Optimize z scale w.r.t. rigid transform error
         logging.info('Calibrating...')
         z_scale_init = 1
-        optim_result = optimize.minimize(self._get_rigid_transform_error, np.asarray(z_scale_init), method='Nelder-Mead')
+        optim_result = optimize.minimize(self._get_rigid_transform_error, np.asarray(z_scale_init),
+                                         method='Nelder-Mead')
         camera_depth_offset = optim_result.x
 
         # Save camera optimized offset and camera pose
@@ -184,3 +185,14 @@ class Calibration:
         logging.info('RMSE: ', rmse)
         np.savetxt('saved_data/camera_pose.txt', self.camera2world, delimiter=' ')
         logging.info('Done.')
+
+
+if __name__ == '__main__':
+    logging.basicConfig(level=logging.INFO)
+    calibration = Calibration(
+        cam_id=246422072474,
+        calib_grid_step=0.05,
+        checkerboard_offset_from_tool=[0.0, 0.0215, 0.0115],
+        workspace_limits=np.asarray([[0.55, 0.65], [-0.2, -0.1], [0.0, 0.2]])
+    )
+    calibration.run()

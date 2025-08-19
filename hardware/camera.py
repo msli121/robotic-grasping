@@ -1,8 +1,12 @@
 import logging
+import time
 
+import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 import pyrealsense2 as rs
+from scipy import ndimage
+from sklearn.neighbors import NearestNeighbors
 
 logger = logging.getLogger(__name__)
 
@@ -38,18 +42,39 @@ class RealSenseCamera:
         # Determine depth scale
         self.scale = cfg.get_device().first_depth_sensor().get_depth_scale()
 
-    def get_image_bundle(self):
+    def get_image_bundle(self, fill_depth=False, fill_method='opencv'):
+        """
+        获取图像包
+
+        :param fill_depth: 是否填充深度图缺失值
+        :param fill_method: 填充方法，可选 opencv bilateral weighted median
+        :return: 包含RGB和对齐深度图的字典
+        """
         frames = self.pipeline.wait_for_frames()
 
         align = rs.align(rs.stream.color)
         aligned_frames = align.process(frames)
         color_frame = aligned_frames.first(rs.stream.color)
-        aligned_depth_frame = aligned_frames.get_depth_frame()
-
-        depth_image = np.asarray(aligned_depth_frame.get_data(), dtype=np.float32)
-        depth_image *= self.scale
         color_image = np.asanyarray(color_frame.get_data())
 
+        aligned_depth_frame = aligned_frames.get_depth_frame()
+        depth_image = np.asarray(aligned_depth_frame.get_data(), dtype=np.float32)
+        # 转换为米
+        depth_image *= self.scale
+        if fill_depth:
+            # 将0值（无效深度）转换为NaN
+            depth_image[depth_image <= 0] = np.nan
+            if fill_method == 'opencv':
+                depth_image = self._fill_depth_opencv(depth_image)
+            elif fill_method == 'bilateral':
+                depth_image = self._fill_depth_bilateral(depth_image)
+            elif fill_method == 'weighted':
+                depth_image = self._fill_depth_weighted(depth_image)
+            elif fill_method == 'median':
+                depth_image = self._fill_depth_median(depth_image)
+            else:
+                raise ValueError(f"Unknown fill_method: {fill_method}")
+        # 扩展通道维度 变为[H,W,1]
         depth_image = np.expand_dims(depth_image, axis=2)
 
         return {
@@ -83,6 +108,147 @@ class RealSenseCamera:
                       [0, 0, 1]])
         dist = np.array(self.intrinsics.coeffs)
         return K, dist
+
+    def _fill_depth_opencv(self, depth_map: np.ndarray) -> np.ndarray:
+        """
+        使用OpenCV的Telea算法填充深度图中的缺失值
+
+        参数:
+            depth_map: 包含NaN值的深度图(单通道)
+
+        返回:
+            填充后的深度图
+        """
+        start_time = time.time()
+
+        # 1. 创建缺失区域掩码 (缺失区域为255，有效区域为0)
+        nan_mask = np.isnan(depth_map).astype(np.uint8) * 255
+
+        # 2. 对掩码进行形态学处理，去除噪点并连接区域
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        mask = cv2.morphologyEx(nan_mask, cv2.MORPH_CLOSE, kernel)
+
+        # 3. 保存原始深度图的统计信息，用于后续归一化
+        valid_depth = depth_map[~np.isnan(depth_map)]
+        if len(valid_depth) == 0:
+            raise ValueError("输入深度图中没有有效深度值")
+
+        min_val, max_val = valid_depth.min(), valid_depth.max()
+
+        # 4. 将深度图归一化到0-255范围(OpenCV inpaint需要)
+        depth_normalized = cv2.normalize(
+            depth_map, None, 0, 255,
+            cv2.NORM_MINMAX, dtype=cv2.CV_8U,
+            mask=~np.isnan(depth_map).astype(np.uint8)
+        )
+        depth_normalized[np.isnan(depth_map)] = 0  # 缺失区域设为0
+
+        # 5. 应用Telea快速修复算法
+        # 参数说明:
+        # - 3: 修复邻域半径
+        # - cv2.INPAINT_TELEA: 快速行进算法，速度快且效果好
+        filled_normalized = cv2.inpaint(depth_normalized, mask, 3, cv2.INPAINT_TELEA)
+
+        # 6. 将填充结果恢复到原始深度范围
+        filled_depth = cv2.normalize(
+            filled_normalized, None,
+            min_val, max_val,
+            cv2.NORM_MINMAX, dtype=cv2.CV_32F
+        )
+
+        # 7. 只替换原始缺失的区域，保留有效深度值
+        result = np.where(np.isnan(depth_map), filled_depth, depth_map)
+
+        logger.debug(f"深度图填充耗时: {time.time() - start_time:.4f}秒")
+        return result
+
+    def _fill_depth_bilateral(self, depth_map: np.ndarray, iterations: int = 3) -> np.ndarray:
+        """
+        使用双边滤波填充深度图缺失值（保留边缘的同时填充，适合需要保持物体轮廓的场景）
+
+        :param depth_map: 包含NaN的深度图
+        :param iterations: 迭代次数
+        :return: 填充后的深度图
+        """
+        start_time = time.time()
+        filled = depth_map.copy()
+
+        for _ in range(iterations):
+            # 找到NaN区域
+            nan_mask = np.isnan(filled)
+
+            if not np.any(nan_mask):
+                break
+
+            # 使用双边滤波进行填充，保留边缘
+            filled[nan_mask] = ndimage.generic_filter(
+                filled,
+                lambda x: np.nanmean(x),
+                size=5,
+                mode='nearest'
+            )[nan_mask]
+
+        logger.debug(f"双边滤波填充耗时: {time.time() - start_time:.4f}秒")
+        return filled
+
+    def _fill_depth_weighted(self, depth_map: np.ndarray, radius: int = 3) -> np.ndarray:
+        """
+        使用邻近有效像素的加权平均，填充结果更平滑
+
+        :param depth_map: 包含NaN的深度图
+        :param radius: 搜索邻域半径
+        :return: 填充后的深度图
+        """
+        start_time = time.time()
+        filled = depth_map.copy()
+        nan_mask = np.isnan(filled)
+
+        if not np.any(nan_mask):
+            return filled
+
+        # 获取NaN点坐标
+        nan_coords = np.argwhere(nan_mask)
+        # 获取有效点坐标和值
+        valid_coords = np.argwhere(~nan_mask)
+        valid_values = filled[~nan_mask]
+
+        # 使用KNN找到最近的有效点
+        nbrs = NearestNeighbors(n_neighbors=5, algorithm='ball_tree').fit(valid_coords)
+        distances, indices = nbrs.kneighbors(nan_coords)
+
+        # 基于距离的加权平均
+        weights = 1.0 / (distances + 1e-8)  # 避免除零
+        normalized_weights = weights / np.sum(weights, axis=1, keepdims=True)
+
+        # 计算填充值
+        filled_values = np.sum(normalized_weights * valid_values[indices], axis=1)
+
+        # 填充NaN值
+        filled[tuple(nan_coords.T)] = filled_values
+
+        logger.debug(f"加权平均填充耗时: {time.time() - start_time:.4f}秒")
+        return filled
+
+    def _fill_depth_median(self, depth_map: np.ndarray, kernel_size: int = 5) -> np.ndarray:
+        """
+        使用中值滤波快速填充深度图缺失值，适合实时应用场景
+
+        :param depth_map: 包含NaN的深度图
+        :param kernel_size: 中值滤波核大小
+        :return: 填充后的深度图
+        """
+        start_time = time.time()
+        # 将NaN替换为0以便进行中值滤波
+        depth_with_zero = np.nan_to_num(depth_map, nan=0)
+
+        # 执行中值滤波
+        median_filtered = ndimage.median_filter(depth_with_zero, size=kernel_size)
+
+        # 只替换原来的NaN区域
+        filled = np.where(np.isnan(depth_map), median_filtered, depth_map)
+
+        logger.debug(f"中值滤波填充耗时: {time.time() - start_time:.4f}秒")
+        return filled
 
 
 if __name__ == '__main__':

@@ -245,6 +245,13 @@ class Camera2WorldCalibrate:
         self.observed_pts = np.asarray(self.observed_pts)
         self.observed_pix = np.asarray(self.observed_pix)
 
+        # 保存measured_pts, 保留6位小数(四舍五入)，不使用科学计数法
+        np.savetxt(os.path.join(data_save_dir, 'robot_pts.txt'), np.round(self.measured_pts, 6), delimiter=' ',
+                   fmt='%.6f')
+        # 保存observed_pts, 保留6位小数(四舍五入)，不使用科学计数法
+        np.savetxt(os.path.join(data_save_dir, 'camera_pts.txt'), np.round(self.observed_pts, 6), delimiter=' ',
+                   fmt='%.6f')
+
         # 保证个数一致
         if len(self.measured_pts) != len(self.observed_pts) != len(self.observed_pix):
             logger.error('数据加载失败，点位信息数量不一致')
@@ -266,11 +273,11 @@ class Camera2WorldCalibrate:
         logger.info('开始保存结果...')
         camera_depth_scale_file = os.path.join(data_save_dir, f'camera_depth_scale.txt')
         logger.info(f'相机深度缩放系数 保存路径: {os.path.abspath(camera_depth_scale_file)}')
-        np.savetxt(camera_depth_scale_file, camera_depth_offset, delimiter=' ')
+        np.savetxt(camera_depth_scale_file, np.round(camera_depth_offset, 6), delimiter=' ', fmt='%.6f')
         rmse = self._get_rigid_transform_error(z_scale=camera_depth_offset)
         logger.info(f'标定结果均方根误差(RMSE): {rmse}')
         camera_pose_file = os.path.join(data_save_dir, f'camera_pose.txt')
-        np.savetxt(camera_pose_file, self.camera2world, delimiter=' ')
+        np.savetxt(camera_pose_file, np.round(self.camera2world, 6), delimiter=' ', fmt='%.6f')
         logger.info(f'相机坐标系到机械臂坐标系变换矩阵 保存路径: {os.path.abspath(camera_pose_file)}')
         logger.info('标定完成！！！')
 
@@ -330,11 +337,11 @@ class Camera2WorldCalibrate:
         logger.info(f"相机畸变系数: {dist}")
         # 保存相机内参
         camera_intrinsics_file = os.path.join(data_save_dir, f'camera_intrinsics.txt')
-        np.savetxt(camera_intrinsics_file, K, delimiter=' ')
+        np.savetxt(camera_intrinsics_file, np.round(K, 6), delimiter=' ', fmt='%.6f')
         logger.info(f'相机内参 保存路径: {os.path.abspath(camera_intrinsics_file)}')
         # 保存相机畸变系数
         camera_distortion_file = os.path.join(data_save_dir, f'camera_distortion.txt')
-        np.savetxt(camera_distortion_file, dist, delimiter=' ')
+        np.savetxt(camera_distortion_file, np.round(dist, 6), delimiter=' ', fmt='%.6f')
         logger.info(f'相机畸变系数 保存路径: {os.path.abspath(camera_distortion_file)}')
         fx = K[0, 0]
         fy = K[1, 1]
@@ -446,7 +453,7 @@ class Camera2WorldCalibrate:
                 logger.info(f"位置{index:02d} 标定板中心点 相机坐标系: {camera_coord_center_point_position}")
                 # 保存机器人位姿信息
                 robot_pose_path = os.path.join(data_save_dir, f'{index:02d}_robot_pose.txt')
-                np.savetxt(robot_pose_path, robot_position, delimiter=' ')
+                np.savetxt(robot_pose_path, np.round(robot_position, 6), delimiter=' ', fmt='%.6f')
                 # 保存机械臂基坐标系下的中心点坐标
                 robot_base_coord_center_point_position = tool_position + self.checkerboard_offset_from_tool
                 self.measured_pts.append(robot_base_coord_center_point_position)
@@ -761,8 +768,8 @@ if __name__ == '__main__':
                                              calib_grid_step=calib_grid_step,
                                              checkerboard_offset_from_tool=checkerboard_offset_from_tool,
                                              workspace_limits=workspace_limits)
-    calibrate_camera.run()
-    # data_save_dir = r'D:\PycharmProjects\robotic-grasping\calibrate\data\20250820002047'
-    # calibrate_camera.run_offline(data_save_dir=data_save_dir, max_img_num=80)
+    # calibrate_camera.run()
+    data_save_dir = r'/Users/a123/PycharmProjects/robotic-grasping/calibrate/data/20250819001632'
+    calibrate_camera.run_offline(data_save_dir=data_save_dir, max_img_num=80)
     #
     # calibrate_camera.verify_calibration_by_realsense_camera(data_save_dir=data_save_dir, move_robot=True)

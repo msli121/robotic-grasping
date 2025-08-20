@@ -25,34 +25,39 @@ from robot.densor_robot import DensorRobot
 
 # 配置日志（支持彩色显示）
 def setup_logger():
+    # 获取logger实例
+    logger = logging.getLogger(__name__)
+
+    # 检查是否已有处理器，有则直接返回，避免重复配置
+    if logger.handlers:
+        return logger
+
+    # 禁用日志传播，防止父logger的处理器也输出日志
+    logger.propagate = False
+
     # 定义日志颜色（不同级别对应不同颜色）
     log_colors = {
-        'DEBUG': 'cyan',  # 调试：青色
-        'INFO': 'green',  # 信息：绿色
-        'WARNING': 'yellow',  # 警告：黄色
-        'ERROR': 'red',  # 错误：红色
-        'CRITICAL': 'bold_red',  # 严重错误：粗体红色
+        'DEBUG': 'cyan',
+        'INFO': 'green',
+        'WARNING': 'yellow',
+        'ERROR': 'red',
+        'CRITICAL': 'bold_red',
     }
 
-    # 定义日志格式（包含颜色和原有格式）
+    # 定义日志格式
     formatter = colorlog.ColoredFormatter(
-        fmt='%(log_color)s%(asctime)s - %(levelname)s - %(message)s',  # 保留原有格式，添加%(log_color)s
+        fmt='%(log_color)s%(asctime)s - %(levelname)s - %(message)s',
         log_colors=log_colors,
-        datefmt='%Y-%m-%d %H:%M:%S'  # 时间格式细化（可选）
+        datefmt='%Y-%m-%d %H:%M:%S'
     )
 
     # 创建控制台处理器并应用格式
     console_handler = logging.StreamHandler()
     console_handler.setFormatter(formatter)
 
-    # 获取logger实例并配置
-    logger = logging.getLogger(__name__)
-    logger.setLevel(logging.INFO)  # 日志级别保持INFO
+    # 配置logger
+    logger.setLevel(logging.INFO)
     logger.addHandler(console_handler)
-
-    # 避免重复输出（清除已有处理器）
-    if len(logger.handlers) > 1:
-        logger.handlers = [logger.handlers[-1]]
 
     return logger
 
@@ -246,12 +251,12 @@ class Camera2WorldCalibrate:
             return
 
         # 通过最小化误差来标定相机深度偏移
-        logger.info('点位信息收集完毕，开始执行标定...')
+        logger.info(f'点位信息收集完毕，点位总个数={len(self.measured_pts)} 开始执行标定...')
         z_scale_init = 1
         optim_result = optimize.minimize(
             self._get_rigid_transform_error,
             np.asarray(z_scale_init),
-            bounds=[(0.9, 1.1)],  # 添加参数范围约束
+            bounds=[(0.85, 1.1)],  # 添加参数范围约束
             method='Nelder-Mead'
         )
         camera_depth_offset = optim_result.x
@@ -306,7 +311,7 @@ class Camera2WorldCalibrate:
         return calib_grid_pts
 
     def run(self):
-        logging.info('开始执行标定任务...')
+        logger.info('开始执行标定任务...')
 
         # 标定照片保存的文件夹
         current_time = time.strftime("%Y%m%d%H%M%S", time.localtime())
@@ -350,7 +355,7 @@ class Camera2WorldCalibrate:
             robot_position = tool_position * 1000
             robot_position = list(robot_position)
             robot_position.extend(home_position[3:])
-            logger.info(f'位置{index:02d} 开始移动到指定位置: {robot_position}')
+            logger.info(f'\n\n位置{index:02d} 开始移动到指定位置: {robot_position}')
 
             # 机器人移动到指定位置
             self.robot.send_position(robot_position)
@@ -378,10 +383,10 @@ class Camera2WorldCalibrate:
                 cv2.imshow("ImageWithCorners", bgr_color_img_copy)
                 cv2.waitKey(1000)
                 cv2.destroyAllWindows()
-                # # 检查角点方向
-                # if abs(corners[0][0][1] - corners[1][0][1]) > 10:
-                #     logger.warning("角点识别方向与实际方向不一致，跳过处理")
-                #     continue
+                # 检查角点方向
+                if abs(corners[0][0][1] - corners[1][0][1]) > 10:
+                    logger.warning("角点识别方向与实际方向不一致，跳过处理")
+                    continue
                 # 保存原图RGB
                 img_origin_path = os.path.join(data_save_dir, f'{index:02d}_origin_rgb.png')
                 cv2.imwrite(img_origin_path, bgr_color_data)
@@ -389,11 +394,12 @@ class Camera2WorldCalibrate:
                 img_with_corner_path = os.path.join(data_save_dir, f'{index:02d}_corner_rgb.png')
                 cv2.imwrite(img_with_corner_path, bgr_color_img_copy)
                 # 获取标定板中心点的坐标
-                center_point_left_up = np.round(corners_refined[27, 0, :]).astype(int)
-                center_point_right_down = np.round(corners_refined[36, 0, :]).astype(int)
+                # center_point_left_up = np.round(corners_refined[27, 0, :]).astype(int)
+                # center_point_right_down = np.round(corners_refined[36, 0, :]).astype(int)
+                center_point_left_up = np.round(corners_refined[59, 0, :]).astype(int)
+                center_point_right_down = np.round(corners_refined[60, 0, :]).astype(int)
                 checkerboard_pix = (center_point_left_up + center_point_right_down) // 2
                 logger.info(f"位置{index:02d} 标定板中心点 像素坐标系: {checkerboard_pix}")
-
                 # 使用cv2画出中心点
                 color_copy = bgr_color_data.copy()
                 cv2.circle(color_copy, checkerboard_pix, 3, (0, 0, 255), -1)
@@ -421,10 +427,6 @@ class Camera2WorldCalibrate:
                 )
                 depth_vis = cv2.applyColorMap(depth_normalized, cv2.COLORMAP_JET)  # 应用彩色映射
                 cv2.imwrite(depth_visual_img_path, depth_vis)
-                # 获取并保存机器人位姿信息 todo check is real robot pose
-                position = self.robot.get_current_position()
-                robot_pose_path = os.path.join(data_save_dir, f'{index:02d}_robot_pose.txt')
-                np.savetxt(robot_pose_path, position, delimiter=' ')
 
                 # 像素坐标转相机坐标
                 camera_z = camera_depth_img[checkerboard_pix[1]][checkerboard_pix[0]]
@@ -442,6 +444,9 @@ class Camera2WorldCalibrate:
                 camera_coord_center_point_position = camera_coord_center_point_position.flatten()
                 self.observed_pts.append(camera_coord_center_point_position)
                 logger.info(f"位置{index:02d} 标定板中心点 相机坐标系: {camera_coord_center_point_position}")
+                # 保存机器人位姿信息
+                robot_pose_path = os.path.join(data_save_dir, f'{index:02d}_robot_pose.txt')
+                np.savetxt(robot_pose_path, robot_position, delimiter=' ')
                 # 保存机械臂基坐标系下的中心点坐标
                 robot_base_coord_center_point_position = tool_position + self.checkerboard_offset_from_tool
                 self.measured_pts.append(robot_base_coord_center_point_position)
@@ -524,8 +529,8 @@ class Camera2WorldCalibrate:
                 # cv2.destroyAllWindows()
 
                 # 获取标定板中心点的坐标
-                center_point_left_up = np.round(corners_refined[27, 0, :]).astype(int)
-                center_point_right_down = np.round(corners_refined[36, 0, :]).astype(int)
+                center_point_left_up = np.round(corners_refined[59, 0, :]).astype(int)
+                center_point_right_down = np.round(corners_refined[60, 0, :]).astype(int)
                 checkerboard_pix = (center_point_left_up + center_point_right_down) // 2
                 # logger.info(f"位置{index:02d} 标定板中心点 像素坐标系: {checkerboard_pix}")
 
@@ -558,7 +563,7 @@ class Camera2WorldCalibrate:
         # 执行标定
         self._do_calibrate(data_save_dir=data_save_dir)
 
-    def verify_calibration_by_realsense_camera(self, data_save_dir=None):
+    def verify_calibration_by_realsense_camera(self, data_save_dir=None, move_robot=False):
         """
         通过RealSense相机验证手眼标定结果，支持用户点击图像获取3D坐标
         优化点：增加错误处理、可视化标记、深度平滑、结果保存和用户提示
@@ -580,6 +585,12 @@ class Camera2WorldCalibrate:
         # ========== 初始化相机 ==========
         self.camera.connect()
         print(f"相机连接成功!")
+
+        # ========== 初始化机械臂 ==========
+        default_grasp_pose = [140, 0, 230.0, -163, 2, 82, 5]
+        if move_robot:
+            self.robot.connect()
+            self.robot.send_position(default_grasp_pose)
 
         # ========== 鼠标回调函数 ==========
         def on_mouse(event, x, y, flags, param):
@@ -625,6 +636,22 @@ class Camera2WorldCalibrate:
                                      f"相机坐标(未缩放): X={camera_xyz_origin[0]:.4f}m, Y={camera_xyz_origin[1]:.4f}m, Z={camera_xyz_origin[2]:.4f}m → "
                                      f"基座坐标(未缩放): X={robot_base_xyz_origin[0]:.4f}m, Y={robot_base_xyz_origin[1]:.4f}m, Z={robot_base_xyz_origin[2]:.4f}m")
                 print(result_str_origin)
+
+                # 6. 移动机械臂到点击点
+                if move_robot:
+                    # 先回到安全点
+                    self.robot.send_position(default_grasp_pose)
+                    time.sleep(2)
+                    # 移动到点击点
+                    robot_pose = robot_base_xyz * 1000
+                    robot_pose = list(robot_pose)
+                    robot_pose.extend(default_grasp_pose[3:])
+                    # y轴偏差
+                    robot_pose[1] = robot_pose[1] - 20
+                    # 停留在上方
+                    robot_pose[2] = robot_pose[2] + 30
+                    self.robot.send_position(robot_pose)
+                    time.sleep(1)
 
                 # 记录结果
                 measurement_results.append({
@@ -695,10 +722,17 @@ class Camera2WorldCalibrate:
                 elif key == ord('r'):  # 清除结果
                     measurement_results.clear()
                     print("已清除所有测量结果")
+                elif key == ord('h') or key == ord('H'):  # 返回抓取默认点
+                    # 执行返回默认抓取点的逻辑
+                    if move_robot:
+                        self.robot.send_position(default_grasp_pose)
+                        time.sleep(2)
+                        print("已返回抓取默认点")
 
         except Exception as e:
             print(f"程序运行出错: {str(e)}")
         finally:
+            self.robot.close()
             # 资源清理
             cv2.destroyAllWindows()
             print("资源已释放")
@@ -719,15 +753,16 @@ class Camera2WorldCalibrate:
 
 if __name__ == '__main__':
     cam_id = 246422072474
-    checkerboard_offset_from_tool = [0.065, 0.0, 0.0]
-    workspace_limits = np.asarray([[0.30, 0.40], [-0.10, 0.10], [0.05, 0.20]])
+    # checkerboard_offset_from_tool = [0.065, -0.003, 0.002]
+    checkerboard_offset_from_tool = [0.0, 0.0, 0.0]
+    workspace_limits = np.asarray([[0.31, 0.41], [-0.1, 0.1], [0.05, 0.25]])
     calib_grid_step = 0.05
     calibrate_camera = Camera2WorldCalibrate(cam_id=cam_id,
                                              calib_grid_step=calib_grid_step,
                                              checkerboard_offset_from_tool=checkerboard_offset_from_tool,
                                              workspace_limits=workspace_limits)
-    # calibrate_camera.run()
-    data_save_dir = r'/Users/a123/PycharmProjects/robotic-grasping/calibrate/data/20250819001632'
-    calibrate_camera.run_offline(data_save_dir=data_save_dir, max_img_num=60)
-
-    # calibrate_camera.verify_calibration_by_realsense_camera(data_save_dir=data_save_dir)
+    calibrate_camera.run()
+    # data_save_dir = r'D:\PycharmProjects\robotic-grasping\calibrate\data\20250820002047'
+    # calibrate_camera.run_offline(data_save_dir=data_save_dir, max_img_num=80)
+    #
+    # calibrate_camera.verify_calibration_by_realsense_camera(data_save_dir=data_save_dir, move_robot=True)

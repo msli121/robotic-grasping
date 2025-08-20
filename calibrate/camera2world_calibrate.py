@@ -94,6 +94,79 @@ class Camera2WorldCalibrate:
         # 相机外参，相机坐标系到机械臂基坐标系的变换矩阵
         self.camera2world = np.eye(4)
 
+
+    @staticmethod
+    def normalize_corner_order(corners, checkerboard_size):
+        """
+        统一OpenCV棋盘格角点的检测顺序，确保总是从左上角开始，逐行扫描。
+
+        参数:
+        corners (np.ndarray): cv2.findChessboardCorners 或 cornerSubPix 返回的角点数组。
+                              形状应为 (rows*cols, 1, 2)。
+        checkerboard_size (tuple): 棋盘格的内角点数量，格式为 (cols, rows)，例如 (8, 8)。
+
+        返回:
+        np.ndarray: 顺序被归一化后的角点数组。
+        """
+        # 将角点数组展平以便于计算，形状变为 (N, 2)
+        corners_flat = np.squeeze(corners)
+
+        # 1. 利用几何特性找到四个最外侧的角点
+        # x+y 最小的是左上角
+        sum_xy = corners_flat.sum(axis=1)
+        top_left_idx = np.argmin(sum_xy)
+
+        # x+y 最大的是右下角
+        bottom_right_idx = np.argmax(sum_xy)
+
+        # x-y 最大的是右上角
+        diff_xy = np.diff(corners_flat, axis=1).flatten()
+        top_right_idx = np.argmax(diff_xy)
+
+        # y-x 最大的是左下角 (等价于 x-y 最小)
+        bottom_left_idx = np.argmin(diff_xy)
+
+        # 2. 判断检测到的第一个角点 corner[0] 是哪个物理角点
+        # 我们用索引来判断，因为浮点数直接比较可能不稳定
+        first_corner_idx = 0
+
+        # 获取检测顺序的起始角点
+        # 注意：为了处理可能的浮点误差，我们比较索引而不是坐标值
+        if first_corner_idx == top_left_idx:
+            # 理想情况：顺序已经是正确的 (左上角 -> 右下角)
+            # logger.debug("角点顺序正确 (TL-BR)")
+            return corners
+
+        elif first_corner_idx == top_right_idx:
+            # 情况2：顺序为 右上角 -> 左下角
+            # 需要对每一行进行水平翻转
+            # logger.debug("角点顺序修正 (TR-BL -> TL-BR)")
+            rows, cols = checkerboard_size[1], checkerboard_size[0]
+            # 保持原始数据类型和形状
+            corrected_corners = corners.reshape(rows, cols, 1, 2)
+            corrected_corners = corrected_corners[:, ::-1, :, :]  # 对列（cols）进行翻转
+            return corrected_corners.reshape(-1, 1, 2)
+
+        elif first_corner_idx == bottom_left_idx:
+            # 情况3：顺序为 左下角 -> 右上角
+            # 需要对整个数组进行垂直翻转
+            # logger.debug("角点顺序修正 (BL-TR -> TL-BR)")
+            return corners[::-1]
+
+        elif first_corner_idx == bottom_right_idx:
+            # 情况4：顺序为 右下角 -> 左上角
+            # 需要进行水平和垂直双重翻转
+            # logger.debug("角点顺序修正 (BR-TL -> TL-BR)")
+            corrected_corners = corners[::-1]  # 先垂直翻转
+            rows, cols = checkerboard_size[1], checkerboard_size[0]
+            corrected_corners = corrected_corners.reshape(rows, cols, 1, 2)
+            corrected_corners = corrected_corners[:, ::-1, :, :]
+            return corrected_corners.reshape(-1, 1, 2)
+        else:
+            # 这是一个异常情况，第一个角点不是四个角之一，可能检测有误
+            logger.warning("无法确定角点检测顺序，可能检测结果有误。")
+            return corners  # 返回原始值，让后续流程处理
+
     @staticmethod
     def pixel_to_camera_coordinate(x, y, depth, K):
         """
@@ -383,6 +456,12 @@ class Camera2WorldCalibrate:
                                                                     cv2.CALIB_CB_ADAPTIVE_THRESH)
             if checkerboard_found and len(corners) == checkerboard_size[0] * checkerboard_size[1]:
                 corners_refined = cv2.cornerSubPix(gray_data, corners, checkerboard_size, (-1, -1), refine_criteria)
+
+                # ==================== 调用归一化函数 ====================
+                # 无论OpenCV如何检测，都将其统一为“左上角起始，逐行扫描”的顺序
+                corners_refined = Camera2WorldCalibrate.normalize_corner_order(corners_refined, checkerboard_size)
+                # ===============================================================
+
                 # 显示角点图像
                 bgr_color_img_copy = bgr_color_data.copy()
                 cv2.drawChessboardCorners(bgr_color_img_copy, checkerboard_size, corners_refined,
@@ -390,10 +469,7 @@ class Camera2WorldCalibrate:
                 cv2.imshow("ImageWithCorners", bgr_color_img_copy)
                 cv2.waitKey(1000)
                 cv2.destroyAllWindows()
-                # 检查角点方向
-                if abs(corners[0][0][1] - corners[1][0][1]) > 10:
-                    logger.warning("角点识别方向与实际方向不一致，跳过处理")
-                    continue
+
                 # 保存原图RGB
                 img_origin_path = os.path.join(data_save_dir, f'{index:02d}_origin_rgb.png')
                 cv2.imwrite(img_origin_path, bgr_color_data)

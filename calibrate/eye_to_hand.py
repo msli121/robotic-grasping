@@ -6,11 +6,83 @@
 import os.path
 
 import cv2
+from scipy.spatial.transform import Rotation as R
 import numpy as np
 
 from hardware.camera import RealSenseCamera
 
 np.set_printoptions(precision=8, suppress=True)
+
+def normalize_corner_order(corners, checkerboard_size):
+    """
+    统一OpenCV棋盘格角点的检测顺序，确保总是从左上角开始，逐行扫描。
+
+    参数:
+    corners (np.ndarray): cv2.findChessboardCorners 或 cornerSubPix 返回的角点数组。
+                          形状应为 (rows*cols, 1, 2)。
+    checkerboard_size (tuple): 棋盘格的内角点数量，格式为 (cols, rows)，例如 (8, 8)。
+
+    返回:
+    np.ndarray: 顺序被归一化后的角点数组。
+    """
+    # 将角点数组展平以便于计算，形状变为 (N, 2)
+    corners_flat = np.squeeze(corners)
+
+    # 1. 利用几何特性找到四个最外侧的角点
+    # x+y 最小的是左上角
+    sum_xy = corners_flat.sum(axis=1)
+    top_left_idx = np.argmin(sum_xy)
+
+    # x+y 最大的是右下角
+    bottom_right_idx = np.argmax(sum_xy)
+
+    # x-y 最大的是右上角
+    diff_xy = np.diff(corners_flat, axis=1).flatten()
+    top_right_idx = np.argmax(diff_xy)
+
+    # y-x 最大的是左下角 (等价于 x-y 最小)
+    bottom_left_idx = np.argmin(diff_xy)
+
+    # 2. 判断检测到的第一个角点 corner[0] 是哪个物理角点
+    # 我们用索引来判断，因为浮点数直接比较可能不稳定
+    first_corner_idx = 0
+
+    # 获取检测顺序的起始角点
+    # 注意：为了处理可能的浮点误差，我们比较索引而不是坐标值
+    if first_corner_idx == top_left_idx:
+        # 理想情况：顺序已经是正确的 (左上角 -> 右下角)
+        # logger.debug("角点顺序正确 (TL-BR)")
+        return corners
+
+    elif first_corner_idx == top_right_idx:
+        # 情况2：顺序为 右上角 -> 左下角
+        # 需要对每一行进行水平翻转
+        # logger.debug("角点顺序修正 (TR-BL -> TL-BR)")
+        rows, cols = checkerboard_size[1], checkerboard_size[0]
+        # 保持原始数据类型和形状
+        corrected_corners = corners.reshape(rows, cols, 1, 2)
+        corrected_corners = corrected_corners[:, ::-1, :, :]  # 对列（cols）进行翻转
+        return corrected_corners.reshape(-1, 1, 2)
+
+    elif first_corner_idx == bottom_left_idx:
+        # 情况3：顺序为 左下角 -> 右上角
+        # 需要对整个数组进行垂直翻转
+        # logger.debug("角点顺序修正 (BL-TR -> TL-BR)")
+        return corners[::-1]
+
+    elif first_corner_idx == bottom_right_idx:
+        # 情况4：顺序为 右下角 -> 左上角
+        # 需要进行水平和垂直双重翻转
+        # logger.debug("角点顺序修正 (BR-TL -> TL-BR)")
+        corrected_corners = corners[::-1]  # 先垂直翻转
+        rows, cols = checkerboard_size[1], checkerboard_size[0]
+        corrected_corners = corrected_corners.reshape(rows, cols, 1, 2)
+        corrected_corners = corrected_corners[:, ::-1, :, :]
+        return corrected_corners.reshape(-1, 1, 2)
+    else:
+        # 这是一个异常情况，第一个角点不是四个角之一，可能检测有误
+        print("无法确定角点检测顺序，可能检测结果有误。")
+        return corners  # 返回原始值，让后续流程处理
 
 
 def euler_angles_to_rotation_matrix(rx, ry, rz):
@@ -24,14 +96,39 @@ def euler_angles_to_rotation_matrix(rx, ry, rz):
     Rz = np.array([[np.cos(rz), -np.sin(rz), 0],
                    [np.sin(rz), np.cos(rz), 0],
                    [0, 0, 1]])
+    # xyz
     R = Rz @ Ry @ Rx
+    # zyx
     # R = Rx @ Ry @ Rz
     return R
 
 
+def euler_to_rotation_matrix_scipy(rx, ry, rz, order='zyx', degrees=False):
+    """
+    【推荐】使用scipy库将欧拉角转换为旋转矩阵，健壮且高效。
+
+    参数:
+    rx, ry, rz (float): 分别绕X, Y, Z轴的旋转角度。
+    order (str): 欧拉角的旋转顺序。对于机器人，这通常是'zyx'（内旋）。
+                 Scipy支持所有12种序列: 'xyz', 'xzy', 'yxz', 'yzx', 'zxy', 'zyx'
+                 以及 'xyx', 'xzx', 'yxy', 'yzy', 'zxz', 'zyz'。
+    degrees (bool): 如果为True，则输入角度单位为度；否则为弧度。
+
+    返回:
+    np.ndarray: 3x3的旋转矩阵。
+    """
+    # 注意：scipy的from_euler函数需要一个与order字符串顺序匹配的角度列表。
+    # 例如，如果order是'zyx'，角度列表必须是[rz, ry, rx]。
+    angle_map = {'x': rx, 'y': ry, 'z': rz}
+    angles_in_order = [angle_map[axis] for axis in order]
+
+    rotation_obj = R.from_euler(order, angles_in_order, degrees=degrees)
+    return rotation_obj.as_matrix()
+
+
 def pose_to_homogeneous_matrix(pose):
     x, y, z, rx, ry, rz = pose
-    R = euler_angles_to_rotation_matrix(rx, ry, rz)
+    R = euler_to_rotation_matrix_scipy(rx, ry, rz)
     t = np.array([x, y, z]).reshape(3, 1)
     H = np.eye(4)
     H[:3, :3] = R
@@ -132,7 +229,7 @@ def compute_T(images_dir, pose_txt, corner_point_long, corner_point_short, corne
 
     checkerboard_image_files.sort(key=_num_key)
 
-    # 2.读取机械臂TCP位姿，构造gripper2base的4x4齐次转换矩阵 (顺序要和图片保持一致)
+    # 2.读取机械臂TCP位姿，构造gripper2base的4x4齐次转换矩阵 (顺序要和图片保持一致)，单位已经归一化为m
     M_gripper2base_matrices = []
     with open(pose_txt, "r", encoding="utf-8") as f:
         for line in f:
@@ -167,28 +264,27 @@ def compute_T(images_dir, pose_txt, corner_point_long, corner_point_short, corne
             size = gray.shape[::-1]
             ret, corners = cv2.findChessboardCorners(gray, (corner_point_long, corner_point_short), None)
             if ret:
-                # 添加标定板坐标系下的3D空间点
-                obj_points.append(objp)
                 # 优化角点坐标，在原角点的基础上寻找亚像素角点
                 corners = cv2.cornerSubPix(gray, corners, (5, 5), (-1, -1), criteria)
-                # 检查角点方向
-                if abs(corners[0][0][1] - corners[1][0][1]) > 10:
-                    print(f"图片{filename} 角点识别方向与标定板坐标系方向不一致，请处理")
-                    return
+                # 归一化角点方向
+                corners = normalize_corner_order(corners, (corner_point_long, corner_point_short))
                 # 添加像素坐标系下的2D空间点
                 img_points.append(corners)
+                # 添加标定板坐标系下的3D空间点
+                obj_points.append(objp)
 
-    # 5.相机标定，获取相机内参矩阵、畸变系数，每组图的标定板坐标系到相机坐标系的旋转平移矩阵
+    img_points = np.asarray(img_points)
+    obj_points = np.asarray(obj_points)
+
+    # 5.方法一 获取每组图的标定板坐标系到相机坐标系的旋转平移矩阵
     print(f"开始进行相机标定 图片个数：{len(img_points)}")
     ret, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(obj_points, img_points, size, None, None)
     print("相机内参矩阵:\n", mtx)  # 内参数矩阵
     print("畸变系数:\n", dist)  # 畸变系数   distortion cofficients = (k_1,k_2,p_1,p_2,k_3)
-    # 保存内参矩阵到./calibrate_result/mtx.txt
     np.savetxt("./calibrate_result/camera_matrix.txt", mtx)
-    # 保存畸变系数到./calibrate_result/dist.txt
     np.savetxt("./calibrate_result/distortion_coefficients.txt", dist)
 
-    # # 读取内参矩阵
+    # # 5.方法二 获取标定板坐标系到相机坐标系的旋转平移矩阵
     # mtx = np.loadtxt("./calibrate_result/camera_matrix.txt")
     # dist = np.loadtxt("./calibrate_result/distortion_coefficients.txt")
     # rvecs = []
@@ -206,6 +302,16 @@ def compute_T(images_dir, pose_txt, corner_point_long, corner_point_short, corne
         # M_base2gripper = M_gripper2base
         R_base2gripper.append(M_base2gripper[0:3, 0:3])
         t_base2gripper.append(M_base2gripper[0:3, 3])
+
+    R_target2cam = []
+    t_target2cam = []
+    for rvec in rvecs:
+        R_obj2cam, _ = cv2.Rodrigues(rvec)
+        R_target2cam.append(R_obj2cam)
+    for tvec in tvecs:
+        t_target2cam.append(tvec)
+    R_target2cam = np.asarray(R_target2cam)
+    t_target2cam = np.asarray(t_target2cam)
 
     # 7. 调用 cv2.calibrateHandEye 进行手眼标定 (方法: TSAI)
     print("开始进行手眼标定....")
@@ -481,6 +587,14 @@ def verify_calibration_by_realsense_camera():
 
 
 if __name__ == '__main__':
+    # rx, ry, rz = 0.1, 0.2, 0.3
+    # order = 'zyx'
+    # R = euler_to_rotation_matrix_scipy(rx, ry, rz, order=order)
+    # print(order, R)
+    #
+    # R = euler_angles_to_rotation_matrix(rx, ry, rz)
+    # print(R)
+
     images_dir = "./checkerboard_images"  # 手眼标定采集的标定版图片所在路径
     robot_tcp_pose_path = "./robot_tcp_pose.txt"  # 采集标定板图片时对应的机械臂末端的位姿 从 第一行到最后一行 需要和采集的标定板的图片顺序进行对应
     corner_point_long = 8  # 标定板角点数量  长边

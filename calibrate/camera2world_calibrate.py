@@ -845,7 +845,7 @@ if __name__ == '__main__':
                                              checkerboard_offset_from_tool=checkerboard_offset_from_tool,
                                              workspace_limits=workspace_limits)
     # calibrate_camera.run()
-    data_save_dir = r'/Users/a123/PycharmProjects/robotic-grasping/calibrate/data/20250819001632'
-    calibrate_camera.run_offline(data_save_dir=data_save_dir, max_img_num=80)
-    #
-    # calibrate_camera.verify_calibration_by_realsense_camera(data_save_dir=data_save_dir, move_robot=True)
+    data_save_dir = r'D:\PycharmProjects\robotic-grasping\calibrate\data\20250820005636'
+    # calibrate_camera.run_offline(data_save_dir=data_save_dir, max_img_num=80)
+
+    calibrate_camera.verify_calibration_by_realsense_camera(data_save_dir=data_save_dir, move_robot=False)

@@ -360,7 +360,7 @@ class VisionRobotSystem:
                 logger.warning("机器人未连接，位置信息文件已创建但内容为空")
 
             # 更新保存编号并反馈状态
-            self.save_count += 1
+            self.save_count = self._get_next_save_count()
             status_msg = f"状态: 已保存第{self.save_count - 1}组数据"
             info_msg = f"已保存第{self.save_count - 1}组数据\n包含：RGB图、深度图（原始+可视化）"
 

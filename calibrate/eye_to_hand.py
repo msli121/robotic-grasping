@@ -13,6 +13,7 @@ from hardware.camera import RealSenseCamera
 
 np.set_printoptions(precision=8, suppress=True)
 
+
 def normalize_corner_order(corners, checkerboard_size):
     """
     统一OpenCV棋盘格角点的检测顺序，确保总是从左上角开始，逐行扫描。
@@ -198,6 +199,22 @@ def compute_reprojection_error(obj_points, img_points, rvecs, tvecs, K, dist):
     return global_rms, per_view_rms
 
 
+def get_and_save_camera_matrix():
+    print(f"尝试连接RealSense相机...")
+    cam = RealSenseCamera(device_id=246422072474)
+    cam.connect()
+    print("RealSense相机连接成功")
+    # 2.获取相机内参
+    K, dist = cam.get_K_and_dist()
+    print("相机内参", K)
+    print("相机畸变系数", dist)
+
+    np.savetxt("./calibrate_result/camera_matrix.txt", K, delimiter=" ", fmt="%.6f")
+    np.savetxt("./calibrate_result/distortion_coefficients.txt", dist, delimiter=" ", fmt="%.6f")
+
+    print("相机内参保存成功")
+
+
 # 计算相机坐标系相到机械臂基座标的旋转矩阵和平移向量
 def compute_T(images_dir, pose_txt, corner_point_long, corner_point_short, corner_point_size):
     print("手眼标定采集的标定版图片所在路径", images_dir)
@@ -212,6 +229,9 @@ def compute_T(images_dir, pose_txt, corner_point_long, corner_point_short, corne
     if not os.path.isfile(pose_txt):
         print("机械臂位姿信息文件不存在")
         return
+
+    mtx = np.loadtxt("./calibrate_result/camera_matrix.txt")
+    dist = np.loadtxt("./calibrate_result/distortion_coefficients.txt")
 
     # 1.标定板图片排序
     exts = {".png", ".jpg", ".jpeg", ".bmp"}
@@ -254,6 +274,9 @@ def compute_T(images_dir, pose_txt, corner_point_long, corner_point_short, corne
     obj_points = []  # 存储3D点
     img_points = []  # 存储2D点
 
+    R_target2cam = []
+    t_target2cam = []
+
     # 4.查找图片的角点
     criteria = (cv2.TERM_CRITERIA_MAX_ITER | cv2.TERM_CRITERIA_EPS, 30, 0.001)
     for filename in checkerboard_image_files:
@@ -268,21 +291,39 @@ def compute_T(images_dir, pose_txt, corner_point_long, corner_point_short, corne
                 corners = cv2.cornerSubPix(gray, corners, (5, 5), (-1, -1), criteria)
                 # 归一化角点方向
                 corners = normalize_corner_order(corners, (corner_point_long, corner_point_short))
-                # 添加像素坐标系下的2D空间点
-                img_points.append(corners)
-                # 添加标定板坐标系下的3D空间点
-                obj_points.append(objp)
+                # solvePnP
+                ret, rvec, tvec = cv2.solvePnP(objp, corners, mtx, dist)
+                if ret:
+                    R_obj2cam, _ = cv2.Rodrigues(rvec)
+                    R_target2cam.append(R_obj2cam)
+                    t_target2cam.append(tvec)
+                    # 添加像素坐标系下的2D空间点
+                    img_points.append(corners)
+                    # 添加标定板坐标系下的3D空间点
+                    obj_points.append(objp)
+                else:
+                    print(f"图片 {filename} 角点检测失败")
 
-    img_points = np.asarray(img_points)
-    obj_points = np.asarray(obj_points)
+    # img_points = np.asarray(img_points)
+    # obj_points = np.asarray(obj_points)
 
-    # 5.方法一 获取每组图的标定板坐标系到相机坐标系的旋转平移矩阵
-    print(f"开始进行相机标定 图片个数：{len(img_points)}")
-    ret, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(obj_points, img_points, size, None, None)
-    print("相机内参矩阵:\n", mtx)  # 内参数矩阵
-    print("畸变系数:\n", dist)  # 畸变系数   distortion cofficients = (k_1,k_2,p_1,p_2,k_3)
-    np.savetxt("./calibrate_result/camera_matrix.txt", mtx)
-    np.savetxt("./calibrate_result/distortion_coefficients.txt", dist)
+    # # 5.方法一 获取每组图的标定板坐标系到相机坐标系的旋转平移矩阵
+    # print(f"开始进行相机标定 图片个数：{len(img_points)}")
+    # ret, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(obj_points, img_points, size, None, None)
+    # print("相机内参矩阵:\n", mtx)  # 内参数矩阵
+    # print("畸变系数:\n", dist)  # 畸变系数   distortion cofficients = (k_1,k_2,p_1,p_2,k_3)
+    # np.savetxt("./calibrate_result/camera_matrix.txt", mtx)
+    # np.savetxt("./calibrate_result/distortion_coefficients.txt", dist)
+
+    # R_target2cam = []
+    # t_target2cam = []
+    # for rvec in rvecs:
+    #     R_obj2cam, _ = cv2.Rodrigues(rvec)
+    #     R_target2cam.append(R_obj2cam)
+    # for tvec in tvecs:
+    #     t_target2cam.append(tvec)
+    # R_target2cam = np.asarray(R_target2cam)
+    # t_target2cam = np.asarray(t_target2cam)
 
     # # 5.方法二 获取标定板坐标系到相机坐标系的旋转平移矩阵
     # mtx = np.loadtxt("./calibrate_result/camera_matrix.txt")
@@ -303,25 +344,21 @@ def compute_T(images_dir, pose_txt, corner_point_long, corner_point_short, corne
         R_base2gripper.append(M_base2gripper[0:3, 0:3])
         t_base2gripper.append(M_base2gripper[0:3, 3])
 
-    R_target2cam = []
-    t_target2cam = []
-    for rvec in rvecs:
-        R_obj2cam, _ = cv2.Rodrigues(rvec)
-        R_target2cam.append(R_obj2cam)
-    for tvec in tvecs:
-        t_target2cam.append(tvec)
-    R_target2cam = np.asarray(R_target2cam)
-    t_target2cam = np.asarray(t_target2cam)
-
     # 7. 调用 cv2.calibrateHandEye 进行手眼标定 (方法: TSAI)
     print("开始进行手眼标定....")
     methods_dict = {
         cv2.CALIB_HAND_EYE_TSAI: "TSAI",
         cv2.CALIB_HAND_EYE_PARK: "PARK",
         cv2.CALIB_HAND_EYE_HORAUD: "HORAUD",
-        cv2.CALIB_HAND_EYE_ANDREFF: "ANDREFF",
-        cv2.CALIB_HAND_EYE_DANIILIDIS: "DANIILIDIS",
+        # cv2.CALIB_HAND_EYE_ANDREFF: "ANDREFF",
+        # cv2.CALIB_HAND_EYE_DANIILIDIS: "DANIILIDIS",
     }
+
+    R_base2gripper = np.asarray(R_base2gripper)
+    t_base2gripper = np.asarray(t_base2gripper)
+    R_target2cam = np.asarray(R_target2cam)
+    t_target2cam = np.asarray(t_target2cam)
+
     R_cam2base = None
     t_cam2base = None
     for method in methods_dict:
@@ -329,8 +366,8 @@ def compute_T(images_dir, pose_txt, corner_point_long, corner_point_short, corne
         R_cam2base, t_cam2base = cv2.calibrateHandEye(
             R_base2gripper,
             t_base2gripper,
-            rvecs,
-            tvecs,
+            R_target2cam,
+            t_target2cam,
             method=method,
         )
         print(f"[{methods_dict[method]}] 相机坐标系到机械臂基坐标系的旋转矩阵:")
@@ -468,24 +505,8 @@ def verify_calibration_by_realsense_camera():
                 return
 
             # 1. 获取深度值（使用周围像素平均值减少噪声）
-            half_kernel = DEPTH_SMOOTH_KERNEL // 2
-            y_min = max(0, y - half_kernel)
-            y_max = min(height, y + half_kernel + 1)
-            x_min = max(0, x - half_kernel)
-            x_max = min(width, x + half_kernel + 1)
-
-            # 提取区域深度值并过滤无效值
-            depth_roi = depth[y_min:y_max, x_min:x_max, 0]
-            valid_depth = depth_roi[depth_roi > 0.1]  # 过滤过近或无效深度
-
-            if len(valid_depth) == 0:
-                print("所选点深度值无效，请重新选择")
-                return
-
-            depth_value = np.mean(valid_depth)  # 取平均值
-            if depth_value < 0.1 or depth_value > 5.0:  # 合理深度范围判断
-                print(f"深度值({depth_value:.3f}m)超出有效范围(0.1-5.0m)")
-                return
+            depth_value = depth[y, x]
+            depth_value = depth_value[0]
 
             # 2. 将像素点投影到相机坐标系
             Xc = (x - cx) * depth_value / fx
@@ -587,20 +608,14 @@ def verify_calibration_by_realsense_camera():
 
 
 if __name__ == '__main__':
-    # rx, ry, rz = 0.1, 0.2, 0.3
-    # order = 'zyx'
-    # R = euler_to_rotation_matrix_scipy(rx, ry, rz, order=order)
-    # print(order, R)
-    #
-    # R = euler_angles_to_rotation_matrix(rx, ry, rz)
-    # print(R)
-
     images_dir = "./checkerboard_images"  # 手眼标定采集的标定版图片所在路径
     robot_tcp_pose_path = "./robot_tcp_pose.txt"  # 采集标定板图片时对应的机械臂末端的位姿 从 第一行到最后一行 需要和采集的标定板的图片顺序进行对应
     corner_point_long = 8  # 标定板角点数量  长边
     corner_point_short = 8
-    corner_point_size = 0.018  # 标定板方格真实尺寸  m
+    corner_point_size = 0.018  # 标定板方格真实尺寸 单位 m
 
+    # 获取相机内参
+    get_and_save_camera_matrix()
     # 手眼标定 眼在手外 获取相机坐标系到机械臂基坐标系下的变换矩阵
     R_cam2base, T_cam2base, mtx, dist = compute_T(images_dir,
                                                   robot_tcp_pose_path,
@@ -609,7 +624,7 @@ if __name__ == '__main__':
                                                   corner_point_size)
 
     # 验证标定结果
-    image_path = "D:\\PycharmProjects\\robotic-grasping\\calibrate\\checkerboard_images\\1.png"
+    # image_path = "D:\\PycharmProjects\\robotic-grasping\\calibrate\\checkerboard_images\\1.png"
     # verify_calibration_by_image(image_path,
     #                             R_cam2base=R_cam2base,
     #                             T_cam2base=T_cam2base,

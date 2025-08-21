@@ -54,6 +54,11 @@ class RealSenseCamera:
         # Determine depth scale
         self.scale = cfg.get_device().first_depth_sensor().get_depth_scale()
 
+    def disconnect(self):
+        if self.pipeline:
+            self.pipeline.stop()
+            self.pipeline = None
+
     def get_image_bundle(self, fill_depth=True, fill_method='opencv'):
         """
         获取图像包

@@ -94,7 +94,6 @@ class Camera2WorldCalibrate:
         # 相机外参，相机坐标系到机械臂基坐标系的变换矩阵
         self.camera2world = np.eye(4)
 
-
     @staticmethod
     def normalize_corner_order(corners, checkerboard_size):
         """
@@ -394,8 +393,7 @@ class Camera2WorldCalibrate:
         logger.info('开始执行标定任务...')
 
         # 标定照片保存的文件夹
-        current_time = time.strftime("%Y%m%d%H%M%S", time.localtime())
-        data_save_dir = os.path.join(BASE_DIR, 'data', current_time)
+        data_save_dir = os.path.join(BASE_DIR, 'data', f'auto_capture_{time.strftime("%Y%m%d_%H%M%S")}')
         os.makedirs(data_save_dir, exist_ok=True)
 
         # 计算空间坐标点
@@ -560,12 +558,6 @@ class Camera2WorldCalibrate:
             logger.error(f'相机内参文件不存在: {camera_intrinsics_file}')
             return
         K = np.loadtxt(camera_intrinsics_file, delimiter=' ')
-        # # 连接相机
-        # self.camera.connect()
-        # logger.info(f"相机连接成功...")
-        # K, dist = self.camera.get_K_and_dist()
-        # logger.info(f"相机内参: {K}")
-        # logger.info(f"相机畸变系数: {dist}")
         fx = K[0, 0]
         fy = K[1, 1]
         cx = K[0, 2]

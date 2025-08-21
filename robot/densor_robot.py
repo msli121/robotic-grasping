@@ -27,7 +27,16 @@ class DensorRobot:
         self.recv_thread = None
         self.current_position = []  # 机器臂当前位置
 
+    def is_robot_connected(self):
+        try:
+            # 通过检查socket文件描述符判断连接状态
+            return self.tcp_client is not None and self.tcp_client.fileno() != -1
+        except:
+            return False
+
     def connect(self):
+        # 设置超时时间
+        self.tcp_client.settimeout(10)
         self.tcp_client.connect((self.host, self.port))
         self.recv_thread = threading.Thread(target=self.receive_message)  # 创建接收消息的线程
         self.recv_thread.daemon = True  # 设置线程为守护线程

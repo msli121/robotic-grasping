@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # @Time       : 2025/8/16 17:39
-# @File       : capture_image.py
-# @Description: RealSense 相机采集标定板图片 + 机器人位置记录 + 角点检测
+# @File       : hand_capture_image.py
+# @Description: RealSense 相机采集标定板图片 + 机械臂位置记录 + 角点检测
 # @Author     : lms
 # @Date       : 2025/8/16 17:39
 
@@ -26,6 +26,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 
 class VisionRobotSystem:
     """视觉与机械臂控制系统主类，整合相机采集、图像显示、机械臂位置记录和角点检测功能"""
@@ -40,12 +42,16 @@ class VisionRobotSystem:
         :param robot_port: 机械臂端口号
         :param checkerboard_size: 标定板角点数量
         """
+        self.data_save_dir = os.path.join(BASE_DIR, 'data',
+                                          f'hand_capture_{time.strftime("%Y%m%d_%H%M%S")}')
+        os.makedirs(self.data_save_dir, exist_ok=True)
+
         self.root = root
         self.root.title("标定板拍照")
         self.root.geometry("1500x800")  # 调整窗口大小，提供更好的显示效果
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)  # 窗口关闭回调
 
-        # 初始化相机和机器人对象
+        # 初始化相机和机械臂对象
         self.camera = RealSenseCamera(device_id=device_id)
         self.robot = None
         self.robot_host = robot_host
@@ -54,13 +60,13 @@ class VisionRobotSystem:
         # 角点检测相关参数
         self.checkerboard_size = checkerboard_size
         self.refine_criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
-        self.corner_detection_enabled = False  # 角点检测状态
+        self.corner_detection_enabled = True  # 角点检测状态
 
         # 图像数据存储
         self.rgb_image = None  # RGB图像数据
         self.depth_image = None  # 深度图像数据（原始数据）
         self.running = False  # 相机运行状态标志
-        self.save_count = self._get_next_save_count()  # 自动获取下一个保存编号
+        self.save_count = 0  # 自动获取下一个保存编号
 
         # 创建GUI界面组件
         self._create_widgets()
@@ -95,8 +101,8 @@ class VisionRobotSystem:
         self.camera_btn = ttk.Button(button_frame, text="连接相机", command=self._toggle_camera)
         self.camera_btn.pack(side=tk.LEFT, padx=5)
 
-        # 连接/断开机器人按钮
-        self.robot_btn = ttk.Button(button_frame, text="连接机器人", command=self._toggle_robot)
+        # 连接/断开机械臂按钮
+        self.robot_btn = ttk.Button(button_frame, text="连接机械臂", command=self._toggle_robot)
         self.robot_btn.pack(side=tk.LEFT, padx=5)
 
         # 角点检测按钮
@@ -134,35 +140,35 @@ class VisionRobotSystem:
         else:
             # 断开相机连接
             self.running = False
-            self.camera.pipeline.stop()  # 停止RealSense管道
+            self.camera.disconnect()  # 断开相机连接
             self.camera_btn.config(text="连接相机")
             self.capture_btn.config(state=tk.DISABLED)  # 禁用拍照按钮
             self.status_var.set("状态: 相机已断开")
             logger.info("相机已断开")
 
     def _toggle_robot(self):
-        """切换机器人连接状态（连接/断开）"""
+        """切换机械臂连接状态（连接/断开）"""
         if self.robot is None or not self._is_robot_connected():
-            # 尝试连接机器人
+            # 尝试连接机械臂
             try:
                 self.robot = DensorRobot(host=self.robot_host, port=self.robot_port)
-                self.robot_btn.config(text="断开机器人")
-                self.status_var.set("状态: 机器人已连接")
-                logger.info("机器人连接成功")
+                self.robot_btn.config(text="断开机械臂")
+                self.status_var.set("状态: 机械臂已连接")
+                logger.info("机械臂连接成功")
             except Exception as e:
-                messagebox.showerror("机器人连接错误", f"无法连接机器人: {str(e)}")
-                logger.error(f"机器人连接错误: {e}")
+                messagebox.showerror("机械臂连接错误", f"无法连接机械臂: {str(e)}")
+                logger.error(f"机械臂连接错误: {e}")
                 self.robot = None
         else:
-            # 断开机器人连接
+            # 断开机械臂连接
             try:
                 self.robot.close()
                 self.robot = None
-                self.robot_btn.config(text="连接机器人")
-                self.status_var.set("状态: 机器人已断开")
-                logger.info("机器人已断开")
+                self.robot_btn.config(text="连接机械臂")
+                self.status_var.set("状态: 机械臂已断开")
+                logger.info("机械臂已断开")
             except Exception as e:
-                logger.error(f"断开机器人连接时出错: {e}")
+                logger.error(f"断开机械臂连接时出错: {e}")
 
     def _toggle_corner_detection(self):
         """切换角点检测状态（开启/关闭）"""
@@ -177,10 +183,9 @@ class VisionRobotSystem:
             logger.info("角点检测已关闭")
 
     def _is_robot_connected(self):
-        """检查机器人是否处于连接状态"""
+        """检查机械臂是否处于连接状态"""
         try:
-            # 通过检查socket文件描述符判断连接状态
-            return self.robot is not None and self.robot.tcp_client.fileno() != -1
+            return self.robot and self.robot.is_connected()
         except:
             return False
 
@@ -295,26 +300,24 @@ class VisionRobotSystem:
         """确定下一个文件保存编号（确保编号连续递增）"""
         count = 1
         # 检查已有文件的最大编号（RGB图）
-        while os.path.exists(os.path.join("captures", f"{count:02d}_rgb.png")):
+        while os.path.exists(os.path.join(self.data_save_dir, f"{count:02d}_rgb.png")):
             count += 1
         return count
 
     def _capture_images(self):
-        """保存当前RGB图、深度图、机器人位置信息和角点图（如果开启）"""
+        """保存当前RGB图、深度图、机械臂位置信息和角点图（如果开启）"""
         # 检查相机是否正常工作
         if not self.running or self.rgb_image is None or self.depth_image is None:
             messagebox.showwarning("警告", "没有可用的图像数据，请确保相机已连接并正常工作")
             return
 
         try:
-            # 创建保存目录（如果不存在）
-            if not os.path.exists("captures"):
-                os.makedirs("captures")
-                logger.info("创建数据保存目录: captures")
+            # 确定下一个保存编号
+            self.save_count = self._get_next_save_count()
 
             # 保存RGB图像（转换为BGR格式，符合OpenCV保存要求）
             rgb_bgr = cv2.cvtColor(self.rgb_image, cv2.COLOR_RGB2BGR)
-            rgb_path = os.path.join("captures", f"{self.save_count:02d}_rgb.png")
+            rgb_path = os.path.join(self.data_save_dir, f"{self.save_count:02d}_origin_rgb.png")
             cv2.imwrite(rgb_path, rgb_bgr)
 
             # 如果开启角点检测，保存带有角点的图像
@@ -323,13 +326,13 @@ class VisionRobotSystem:
                 _, rgb_with_corners = self._detect_checkerboard_corners(self.rgb_image)
                 if rgb_with_corners is not None:
                     corner_bgr = cv2.cvtColor(rgb_with_corners, cv2.COLOR_RGB2BGR)
-                    corner_path = os.path.join("captures", f"{self.save_count:02d}_rgb_corner.png")
+                    corner_path = os.path.join(self.data_save_dir, f"{self.save_count:02d}_corner_rgb.png")
                     cv2.imwrite(corner_path, corner_bgr)
                     corner_saved = True
                     logger.info(f"已保存角点图像: {corner_path}")
 
             # 保存原始深度数据（.npy格式，保留真实深度值）
-            depth_npy_path = os.path.join("captures", f"{self.save_count:02d}_depth.npy")
+            depth_npy_path = os.path.join(self.data_save_dir, f"{self.save_count:02d}_depth_raw.npy")
             np.save(depth_npy_path, self.depth_image)
 
             # 保存可视化深度图（.png格式，便于直观查看）
@@ -338,31 +341,24 @@ class VisionRobotSystem:
                 cv2.NORM_MINMAX, dtype=cv2.CV_8U
             )
             depth_colored = cv2.applyColorMap(depth_normalized, cv2.COLORMAP_JET)
-            depth_png_path = os.path.join("captures", f"{self.save_count:02d}_depth.png")
+            depth_png_path = os.path.join(self.data_save_dir, f"{self.save_count:02d}_depth_visual.png")
             cv2.imwrite(depth_png_path, depth_colored)
 
-            # 获取并保存机器人位置信息
+            # 获取并保存机械臂位置信息
             pos_saved = False
-            pos_path = os.path.join("captures", f"{self.save_count:02d}_pos.txt")
+            pos_path = os.path.join(self.data_save_dir, f"{self.save_count:02d}_robot_pose.txt")
             if self._is_robot_connected():
                 position = self.robot.get_current_position()
-                with open(pos_path, 'w', encoding='utf-8') as f:
-                    f.write(f"time: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-                    f.write(f"args: [x, y, z, rx, ry, rz, fig] (mm/度)\n")
-                    f.write(f"data: {position}")
-                logger.info(f"已获取机器人位置: {position}")
+                logger.info(f"已获取机械臂位置: {position}")
+                np.savetxt(pos_path, np.round(position, 6), delimiter=' ', fmt='%.6f')
                 pos_saved = True
             else:
                 with open(pos_path, 'w', encoding='utf-8') as f:
-                    f.write(f"time: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-                    f.write(f"args: [x, y, z, rx, ry, rz, fig] (mm/度)\n")
-                    f.write(f"data: ")
-                logger.warning("机器人未连接，位置信息文件已创建但内容为空")
+                    f.write(f"")
+                logger.warning("机械臂未连接，位置信息文件已创建但内容为空")
 
-            # 更新保存编号并反馈状态
-            self.save_count = self._get_next_save_count()
-            status_msg = f"状态: 已保存第{self.save_count - 1}组数据"
-            info_msg = f"已保存第{self.save_count - 1}组数据\n包含：RGB图、深度图（原始+可视化）"
+            status_msg = f"状态: 已保存第{self.save_count}组数据"
+            info_msg = f"已保存第{self.save_count}组数据\n包含：RGB图、深度图（原始+可视化）"
 
             if pos_saved:
                 status_msg += "（包含TCP位置信息）"
@@ -384,7 +380,7 @@ class VisionRobotSystem:
         """窗口关闭时的资源清理"""
         self.running = False  # 停止相机线程
         if self.robot and self._is_robot_connected():
-            self.robot.close()  # 关闭机器人连接
+            self.robot.close()  # 关闭机械臂连接
         if self.camera.pipeline:
             self.camera.pipeline.stop()  # 停止相机管道
         logger.info("系统已关闭")

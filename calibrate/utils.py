@@ -9,6 +9,8 @@ import math
 import os
 import re
 import shutil
+from scipy.spatial.transform import Rotation as R
+
 
 import cv2
 import numpy as np
@@ -19,6 +21,29 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+
+def euler_to_rotation_matrix_scipy(rx, ry, rz, order='zyx', degrees=False):
+    """
+    【推荐】使用scipy库将欧拉角转换为旋转矩阵，健壮且高效。
+
+    参数:
+    rx, ry, rz (float): 分别绕X, Y, Z轴的旋转角度。
+    order (str): 欧拉角的旋转顺序。对于机器人，这通常是'zyx'（内旋）。
+                 Scipy支持所有12种序列: 'xyz', 'xzy', 'yxz', 'yzx', 'zxy', 'zyx'
+                 以及 'xyx', 'xzx', 'yxy', 'yzy', 'zxz', 'zyz'。
+    degrees (bool): 如果为True，则输入角度单位为度；否则为弧度。
+
+    返回:
+    np.ndarray: 3x3的旋转矩阵。
+    """
+    # 注意：scipy的from_euler函数需要一个与order字符串顺序匹配的角度列表。
+    # 例如，如果order是'zyx'，角度列表必须是[rz, ry, rx]。
+    angle_map = {'x': rx, 'y': ry, 'z': rz}
+    angles_in_order = [angle_map[axis] for axis in order]
+
+    rotation_obj = R.from_euler(order, angles_in_order, degrees=degrees)
+    return rotation_obj.as_matrix()
 
 
 def normalize_corner_order(corners, checkerboard_size):
@@ -272,6 +297,7 @@ def detect_and_save_corners(rgb_image_path, check_direction=True):
 
 # 使用示例
 if __name__ == "__main__":
+    print(euler_to_rotation_matrix_scipy(0, 0, 0))
     # 处理captures目录下的文件（可根据实际情况修改）
     source_dir = "./captures"
     # 处理拍摄的照片文件

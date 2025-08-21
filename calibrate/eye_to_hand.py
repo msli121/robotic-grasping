@@ -2,88 +2,259 @@
 """
 眼在手外 用采集到的图片信息和机械臂位姿信息计算相机坐标系相对于机械臂基座标的旋转矩阵和平移向量
 """
-
+import glob
 import os.path
+import logging
+import random
+import time
 
+import colorlog
 import cv2
 from scipy.spatial.transform import Rotation as R
 import numpy as np
 
+from calibrate.utils import normalize_corner_order
 from hardware.camera import RealSenseCamera
+from robot.densor_robot import DensorRobot
 
 np.set_printoptions(precision=8, suppress=True)
 
 
-def normalize_corner_order(corners, checkerboard_size):
-    """
-    统一OpenCV棋盘格角点的检测顺序，确保总是从左上角开始，逐行扫描。
+# 配置日志（支持彩色显示）
+def setup_logger():
+    # 获取logger实例
+    logger = logging.getLogger(__name__)
 
-    参数:
-    corners (np.ndarray): cv2.findChessboardCorners 或 cornerSubPix 返回的角点数组。
-                          形状应为 (rows*cols, 1, 2)。
-    checkerboard_size (tuple): 棋盘格的内角点数量，格式为 (cols, rows)，例如 (8, 8)。
+    # 检查是否已有处理器，有则直接返回，避免重复配置
+    if logger.handlers:
+        return logger
 
-    返回:
-    np.ndarray: 顺序被归一化后的角点数组。
-    """
-    # 将角点数组展平以便于计算，形状变为 (N, 2)
-    corners_flat = np.squeeze(corners)
+    # 禁用日志传播，防止父logger的处理器也输出日志
+    logger.propagate = False
 
-    # 1. 利用几何特性找到四个最外侧的角点
-    # x+y 最小的是左上角
-    sum_xy = corners_flat.sum(axis=1)
-    top_left_idx = np.argmin(sum_xy)
+    # 定义日志颜色（不同级别对应不同颜色）
+    log_colors = {
+        'DEBUG': 'cyan',
+        'INFO': 'green',
+        'WARNING': 'yellow',
+        'ERROR': 'red',
+        'CRITICAL': 'bold_red',
+    }
 
-    # x+y 最大的是右下角
-    bottom_right_idx = np.argmax(sum_xy)
+    # 定义日志格式
+    formatter = colorlog.ColoredFormatter(
+        fmt='%(log_color)s%(asctime)s - %(levelname)s - %(message)s',
+        log_colors=log_colors,
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
 
-    # x-y 最大的是右上角
-    diff_xy = np.diff(corners_flat, axis=1).flatten()
-    top_right_idx = np.argmax(diff_xy)
+    # 创建控制台处理器并应用格式
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(formatter)
 
-    # y-x 最大的是左下角 (等价于 x-y 最小)
-    bottom_left_idx = np.argmin(diff_xy)
+    # 配置logger
+    logger.setLevel(logging.INFO)
+    logger.addHandler(console_handler)
 
-    # 2. 判断检测到的第一个角点 corner[0] 是哪个物理角点
-    # 我们用索引来判断，因为浮点数直接比较可能不稳定
-    first_corner_idx = 0
+    return logger
 
-    # 获取检测顺序的起始角点
-    # 注意：为了处理可能的浮点误差，我们比较索引而不是坐标值
-    if first_corner_idx == top_left_idx:
-        # 理想情况：顺序已经是正确的 (左上角 -> 右下角)
-        # logger.debug("角点顺序正确 (TL-BR)")
-        return corners
 
-    elif first_corner_idx == top_right_idx:
-        # 情况2：顺序为 右上角 -> 左下角
-        # 需要对每一行进行水平翻转
-        # logger.debug("角点顺序修正 (TR-BL -> TL-BR)")
-        rows, cols = checkerboard_size[1], checkerboard_size[0]
-        # 保持原始数据类型和形状
-        corrected_corners = corners.reshape(rows, cols, 1, 2)
-        corrected_corners = corrected_corners[:, ::-1, :, :]  # 对列（cols）进行翻转
-        return corrected_corners.reshape(-1, 1, 2)
+# 初始化日志
+logger = setup_logger()
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-    elif first_corner_idx == bottom_left_idx:
-        # 情况3：顺序为 左下角 -> 右上角
-        # 需要对整个数组进行垂直翻转
-        # logger.debug("角点顺序修正 (BL-TR -> TL-BR)")
-        return corners[::-1]
 
-    elif first_corner_idx == bottom_right_idx:
-        # 情况4：顺序为 右下角 -> 左上角
-        # 需要进行水平和垂直双重翻转
-        # logger.debug("角点顺序修正 (BR-TL -> TL-BR)")
-        corrected_corners = corners[::-1]  # 先垂直翻转
-        rows, cols = checkerboard_size[1], checkerboard_size[0]
-        corrected_corners = corrected_corners.reshape(rows, cols, 1, 2)
-        corrected_corners = corrected_corners[:, ::-1, :, :]
-        return corrected_corners.reshape(-1, 1, 2)
-    else:
-        # 这是一个异常情况，第一个角点不是四个角之一，可能检测有误
-        print("无法确定角点检测顺序，可能检测结果有误。")
-        return corners  # 返回原始值，让后续流程处理
+class EyeToHand:
+    def __init__(self, camera_id,
+                 chessboard_size,
+                 chessboard_step,
+                 chessboard_offset_from_tool,
+                 workspace_limits):
+        self.camera_id = camera_id
+        self.chessboard_size = chessboard_size
+        self.chessboard_step = chessboard_step
+        self.chessboard_offset_from_tool = chessboard_offset_from_tool
+        self.workspace_limits = workspace_limits
+
+        # 相机
+        self.camera = RealSenseCamera(device_id=camera_id)
+        # 机械臂
+        self.robot = DensorRobot()
+
+        # 标定板到机械臂基坐标系的变换矩阵
+        self.T_base_board = np.eye(4)
+
+    def _generate_grid(self):
+        """
+        Construct 3D calibration grid across workspace
+        生成机械臂工作空间中的3D网格点
+        :return calibration grid points
+        """
+        # 将计算出的样本数量转换为整数
+        x_num = int(np.round(1 + (self.workspace_limits[0][1] - self.workspace_limits[0][0]) / self.calib_grid_step))
+        y_num = int(np.round(1 + (self.workspace_limits[1][1] - self.workspace_limits[1][0]) / self.calib_grid_step))
+        z_num = int(np.round(1 + (self.workspace_limits[2][1] - self.workspace_limits[2][0]) / self.calib_grid_step))
+
+        gridspace_x = np.linspace(self.workspace_limits[0][0], self.workspace_limits[0][1], x_num)
+        gridspace_y = np.linspace(self.workspace_limits[1][0], self.workspace_limits[1][1], y_num)
+        gridspace_z = np.linspace(self.workspace_limits[2][0], self.workspace_limits[2][1], z_num)
+
+        calib_grid_x, calib_grid_y, calib_grid_z = np.meshgrid(gridspace_x, gridspace_y, gridspace_z)
+        num_calib_grid_pts = calib_grid_x.shape[0] * calib_grid_x.shape[1] * calib_grid_x.shape[2]
+        calib_grid_x.shape = (num_calib_grid_pts, 1)
+        calib_grid_y.shape = (num_calib_grid_pts, 1)
+        calib_grid_z.shape = (num_calib_grid_pts, 1)
+        calib_grid_pts = np.concatenate((calib_grid_x, calib_grid_y, calib_grid_z), axis=1)
+        return calib_grid_pts
+
+    def collect_data(self):
+        """
+        采集数据
+        :return:
+        """
+
+        # 保存的文件夹
+        data_save_dir = os.path.join(BASE_DIR, 'data', f'hand_to_eye_{time.strftime("%Y%m%d_%H%M%S")}')
+        os.makedirs(data_save_dir, exist_ok=True)
+
+        # 计算空间坐标点
+        calib_grid_pts = self._generate_grid()
+        logger.info(f'工作空间总点数: {calib_grid_pts.shape[0]}')
+
+        # 连接相机
+        self.camera.connect()
+        logger.info(f"相机连接成功...")
+        K, dist = self.camera.get_K_and_dist()
+        # 保存相机内参
+        np.savetxt(os.path.join(data_save_dir, "camera_matrix.txt"), K, delimiter=" ", fmt="%.6f")
+        np.savetxt(os.path.join(data_save_dir, "distortion_coefficients.txt"), dist, delimiter=" ", fmt="%.6f")
+        logger.info(f"相机内参: {K}")
+        logger.info(f"相机畸变系数: {dist}")
+
+        # 连接机器人
+        logger.info(f"开始连接机器人...")
+        self.robot.connect()
+        home_position = [300.0, 5, 200.0, 127, 76, 122, 1]
+        # 机器人移动到默认位置
+        self.robot.send_position(home_position)
+        # 等待机械臂到达指定位置
+        time.sleep(2)
+
+        for index, tool_position in enumerate(calib_grid_pts):
+            # 用tool_position替换home_position的前三个元素，并且乘以1000
+            robot_position = tool_position * 1000
+            robot_position = list(robot_position)
+            robot_position.extend(home_position[3:])
+
+            # 随机调整角度 -10 ~ 10
+            robot_position[3] = random.randint(-10, 10)
+            robot_position[4] = random.randint(-10, 10)
+            robot_position[5] = random.randint(-10, 10)
+
+            logger.info(f'\n\n位置{index:02d} 开始移动到指定位置: {robot_position}')
+
+            # 机器人移动到指定位置
+            self.robot.send_position(robot_position)
+            # 等待机械臂到达指定位置
+            time.sleep(2)
+            logger.info(f'位置{index:02d} 移动到指定位置完成')
+
+            # 寻找标定板中心坐标
+            checkerboard_size = self.chessboard_size
+            refine_criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
+            image_bundle = self.camera.get_image_bundle()
+            camera_color_img = image_bundle['rgb']
+            camera_depth_img = image_bundle['aligned_depth']
+
+            bgr_color_data = cv2.cvtColor(camera_color_img, cv2.COLOR_RGB2BGR)
+            gray_data = cv2.cvtColor(bgr_color_data, cv2.COLOR_RGB2GRAY)
+            checkerboard_found, corners = cv2.findChessboardCorners(gray_data, checkerboard_size, None,
+                                                                    cv2.CALIB_CB_ADAPTIVE_THRESH)
+            if checkerboard_found and len(corners) == checkerboard_size[0] * checkerboard_size[1]:
+                corners_refined = cv2.cornerSubPix(gray_data, corners, checkerboard_size, (-1, -1), refine_criteria)
+
+                # ==================== 调用归一化函数 ====================
+                # 无论OpenCV如何检测，都将其统一为“左上角起始，逐行扫描”的顺序
+                corners_refined = normalize_corner_order(corners_refined, checkerboard_size)
+                # ===============================================================
+
+                # 显示角点图像
+                bgr_color_img_copy = bgr_color_data.copy()
+                cv2.drawChessboardCorners(bgr_color_img_copy, checkerboard_size, corners_refined,
+                                          checkerboard_found)
+                cv2.imshow("ImageWithCorners", bgr_color_img_copy)
+                cv2.waitKey(1000)
+                cv2.destroyAllWindows()
+
+                # 保存原图RGB
+                img_origin_path = os.path.join(data_save_dir, f'{index:02d}_origin_rgb.png')
+                cv2.imwrite(img_origin_path, bgr_color_data)
+                logger.info(f'位置{index:02d} 原始图像已保存至: {img_origin_path}')
+
+                # 保存带有角点的图像
+                img_with_corner_path = os.path.join(data_save_dir, f'{index:02d}_corner_rgb.png')
+                cv2.imwrite(img_with_corner_path, bgr_color_img_copy)
+                logger.info(f'位置{index:02d} 带有角点的图像已保存至: {img_with_corner_path}')
+
+                # 保存深度图数据
+                camera_depth_copy = camera_depth_img.copy()
+                depth_data_path = os.path.join(data_save_dir, f'{index:02d}_depth_raw.npy')
+                np.save(depth_data_path, camera_depth_copy)
+                logger.info(f'位置{index:02d} 深度图数据已保存至: {depth_data_path}')
+
+                # 保存深度可视化图
+                depth_visual_img_path = os.path.join(data_save_dir, f'{index:02d}_depth_visual.png')
+                # 深度图预处理：归一化并转换为彩色图（便于可视化）
+                # noinspection PyTypeChecker
+                depth_normalized = cv2.normalize(
+                    camera_depth_copy.squeeze(),  # 移除单通道维度
+                    None,
+                    0, 255,
+                    cv2.NORM_MINMAX,
+                    dtype=cv2.CV_8U  # 转换为8位无符号整数
+                )
+                depth_vis = cv2.applyColorMap(depth_normalized, cv2.COLORMAP_JET)  # 应用彩色映射
+                cv2.imwrite(depth_visual_img_path, depth_vis)
+                logger.info(f'位置{index:02d} 深度可视化图已保存至: {depth_data_path}')
+
+                # 保存机器人位姿信息
+                robot_pose_path = os.path.join(data_save_dir, f'{index:02d}_robot_pose.txt')
+                np.savetxt(robot_pose_path, np.round(robot_position, 6), delimiter=' ', fmt='%.6f')
+                logger.info(f'位置{index:02d} 位姿信息已保存至: {robot_pose_path}')
+
+            else:
+                logger.error(f"位置{index:02d} 标定板未找到角点")
+                continue
+
+        return data_save_dir
+
+    def do_calibrate(self, collect_data_dir=None, M_base_chessboard=None):
+        """
+        执行眼在手外标定，获取相机坐标系相对于机械臂基座标的旋转矩阵和平移向量
+        :param collect_data_dir: 采集数据的文件夹路径
+        :param M_base_chessboard: 标定板坐标系到机械臂基座标的变换矩阵
+        :return: R_base_camera :
+        """
+        if not collect_data_dir or not os.path.exists(collect_data_dir):
+            raise ValueError("采集数据文件夹路径不存在")
+        if not M_base_chessboard:
+            raise ValueError("标定板坐标系到机械臂基座标的变换矩阵未指定")
+        if not os.path.exists(os.path.join(collect_data_dir, 'camera_matrix.txt')):
+            raise ValueError("相机内参文件不存在")
+        if not os.path.exists(os.path.join(collect_data_dir, 'distortion_coeffs.txt')):
+            raise ValueError("畸变系数文件不存在")
+
+        # 读取采集数据
+        rgb_files = sorted(glob.glob(os.path.join(collect_data_dir, '*origin_rgb.png')))
+        depth_files = sorted(glob.glob(os.path.join(collect_data_dir, '*_depth_raw.npy')))
+        robot_pose_files = sorted(glob.glob(os.path.join(collect_data_dir, '*_robot_pose.txt')))
+
+        if len(rgb_files) != len(depth_files) or len(rgb_files) != len(robot_pose_files):
+            raise ValueError("采集数据文件夹中文件数量不一致")
+
+        # 读取相机参数
+        mtx = np.loadtxt(os.path.join(collect_data_dir, 'camera_matrix.txt'))
+        dist = np.loadtxt(os.path.join(collect_data_dir, 'distortion_coeffs.txt'))
 
 
 def euler_angles_to_rotation_matrix(rx, ry, rz):
@@ -200,10 +371,13 @@ def compute_reprojection_error(obj_points, img_points, rvecs, tvecs, K, dist):
 
 
 def get_and_save_camera_matrix():
-    print(f"尝试连接RealSense相机...")
+    """
+    连接RealSense相机并获取相机内参
+    """
+    print(f"连接相机...")
     cam = RealSenseCamera(device_id=246422072474)
     cam.connect()
-    print("RealSense相机连接成功")
+    print("相机连接成功")
     # 2.获取相机内参
     K, dist = cam.get_K_and_dist()
     print("相机内参", K)
@@ -212,7 +386,7 @@ def get_and_save_camera_matrix():
     np.savetxt("./calibrate_result/camera_matrix.txt", K, delimiter=" ", fmt="%.6f")
     np.savetxt("./calibrate_result/distortion_coefficients.txt", dist, delimiter=" ", fmt="%.6f")
 
-    print("相机内参保存成功")
+    print("相机内参保存成功\n")
 
 
 # 计算相机坐标系相到机械臂基座标的旋转矩阵和平移向量
@@ -235,8 +409,8 @@ def compute_T(images_dir, pose_txt, corner_point_long, corner_point_short, corne
 
     # 1.标定板图片排序
     exts = {".png", ".jpg", ".jpeg", ".bmp"}
-    checkerboard_image_files = [f for f in os.listdir(images_dir) if os.path.splitext(f.lower())[1] in exts]
-    if not checkerboard_image_files:
+    chessboard_image_files = [f for f in os.listdir(images_dir) if os.path.splitext(f.lower())[1] in exts]
+    if not chessboard_image_files:
         raise RuntimeError(f"在 {images_dir} 未找到图片！")
 
     def _num_key(name):
@@ -247,7 +421,7 @@ def compute_T(images_dir, pose_txt, corner_point_long, corner_point_short, corne
         except:
             return stem
 
-    checkerboard_image_files.sort(key=_num_key)
+    chessboard_image_files.sort(key=_num_key)
 
     # 2.读取机械臂TCP位姿，构造gripper2base的4x4齐次转换矩阵 (顺序要和图片保持一致)，单位已经归一化为m
     M_gripper2base_matrices = []
@@ -263,7 +437,7 @@ def compute_T(images_dir, pose_txt, corner_point_long, corner_point_short, corne
             # 获取 gripper2base 变换矩阵
             M_gripper2base_matrices.append(pose_to_homogeneous_matrix([x, y, z, rx, ry, rz]))
 
-    if len(M_gripper2base_matrices) != len(checkerboard_image_files):
+    if len(M_gripper2base_matrices) != len(chessboard_image_files):
         print(f"警告：TCP位姿数量与图片数量不一致，请确认两者顺序与数量一致。")
         return
 
@@ -279,10 +453,10 @@ def compute_T(images_dir, pose_txt, corner_point_long, corner_point_short, corne
 
     # 4.查找图片的角点
     criteria = (cv2.TERM_CRITERIA_MAX_ITER | cv2.TERM_CRITERIA_EPS, 30, 0.001)
-    for filename in checkerboard_image_files:
-        checkerboard_image = os.path.join(images_dir, filename)
-        if os.path.exists(checkerboard_image):
-            img = cv2.imread(checkerboard_image)
+    for filename in chessboard_image_files:
+        chessboard_image = os.path.join(images_dir, filename)
+        if os.path.exists(chessboard_image):
+            img = cv2.imread(chessboard_image)
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             size = gray.shape[::-1]
             ret, corners = cv2.findChessboardCorners(gray, (corner_point_long, corner_point_short), None)
@@ -608,7 +782,7 @@ def verify_calibration_by_realsense_camera():
 
 
 if __name__ == '__main__':
-    images_dir = "./checkerboard_images"  # 手眼标定采集的标定版图片所在路径
+    images_dir = "./chessboard_images"  # 手眼标定采集的标定版图片所在路径
     robot_tcp_pose_path = "./robot_tcp_pose.txt"  # 采集标定板图片时对应的机械臂末端的位姿 从 第一行到最后一行 需要和采集的标定板的图片顺序进行对应
     corner_point_long = 8  # 标定板角点数量  长边
     corner_point_short = 8
@@ -624,7 +798,7 @@ if __name__ == '__main__':
                                                   corner_point_size)
 
     # 验证标定结果
-    # image_path = "D:\\PycharmProjects\\robotic-grasping\\calibrate\\checkerboard_images\\1.png"
+    # image_path = "D:\\PycharmProjects\\robotic-grasping\\calibrate\\chessboard_images\\1.png"
     # verify_calibration_by_image(image_path,
     #                             R_cam2base=R_cam2base,
     #                             T_cam2base=T_cam2base,

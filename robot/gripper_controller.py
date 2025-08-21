@@ -215,6 +215,7 @@ if __name__ == "__main__":
         # gripper.reset()
         # time.sleep(2)
         print("gripper closed")
+        gripper.disconnect()
     except ConnectionError as e:
         logger.error(f"连接异常: {e}")
     finally:

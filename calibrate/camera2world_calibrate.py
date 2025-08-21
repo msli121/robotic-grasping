@@ -9,6 +9,8 @@
 # @Date       : 2025/8/16 17:39
 import glob
 import logging
+import random
+
 import colorlog
 import os
 import time
@@ -93,6 +95,7 @@ class Camera2WorldCalibrate:
         self.observed_pix = []
         # 相机外参，相机坐标系到机械臂基坐标系的变换矩阵
         self.camera2world = np.eye(4)
+
 
     @staticmethod
     def normalize_corner_order(corners, checkerboard_size):
@@ -433,6 +436,10 @@ class Camera2WorldCalibrate:
             robot_position = tool_position * 1000
             robot_position = list(robot_position)
             robot_position.extend(home_position[3:])
+            # robot_position  角度随机加上 max_degree
+            robot_position[3] += random.uniform(-10, 10)
+            robot_position[4] += random.uniform(-10, 10)
+            robot_position[5] += random.uniform(-10, 10)
             logger.info(f'\n\n位置{index:02d} 开始移动到指定位置: {robot_position}')
 
             # 机器人移动到指定位置
@@ -475,10 +482,10 @@ class Camera2WorldCalibrate:
                 img_with_corner_path = os.path.join(data_save_dir, f'{index:02d}_corner_rgb.png')
                 cv2.imwrite(img_with_corner_path, bgr_color_img_copy)
                 # 获取标定板中心点的坐标
-                # center_point_left_up = np.round(corners_refined[27, 0, :]).astype(int)
-                # center_point_right_down = np.round(corners_refined[36, 0, :]).astype(int)
-                center_point_left_up = np.round(corners_refined[59, 0, :]).astype(int)
-                center_point_right_down = np.round(corners_refined[60, 0, :]).astype(int)
+                center_point_left_up = np.round(corners_refined[27, 0, :]).astype(int)
+                center_point_right_down = np.round(corners_refined[36, 0, :]).astype(int)
+                # center_point_left_up = np.round(corners_refined[59, 0, :]).astype(int)
+                # center_point_right_down = np.round(corners_refined[60, 0, :]).astype(int)
                 checkerboard_pix = (center_point_left_up + center_point_right_down) // 2
                 logger.info(f"位置{index:02d} 标定板中心点 像素坐标系: {checkerboard_pix}")
                 # 使用cv2画出中心点
@@ -604,8 +611,10 @@ class Camera2WorldCalibrate:
                 # cv2.destroyAllWindows()
 
                 # 获取标定板中心点的坐标
-                center_point_left_up = np.round(corners_refined[59, 0, :]).astype(int)
-                center_point_right_down = np.round(corners_refined[60, 0, :]).astype(int)
+                center_point_left_up = np.round(corners_refined[27, 0, :]).astype(int)
+                center_point_right_down = np.round(corners_refined[36, 0, :]).astype(int)
+                # center_point_left_up = np.round(corners_refined[59, 0, :]).astype(int)
+                # center_point_right_down = np.round(corners_refined[60, 0, :]).astype(int)
                 checkerboard_pix = (center_point_left_up + center_point_right_down) // 2
                 # logger.info(f"位置{index:02d} 标定板中心点 像素坐标系: {checkerboard_pix}")
 
@@ -662,7 +671,7 @@ class Camera2WorldCalibrate:
         print(f"相机连接成功!")
 
         # ========== 初始化机械臂 ==========
-        default_grasp_pose = [140, 0, 230.0, -163, 2, 82, 5]
+        default_grasp_pose = [140, 0, 230.0, -167, 2, 81, 5]
         if move_robot:
             self.robot.connect()
             self.robot.send_position(default_grasp_pose)
@@ -724,7 +733,7 @@ class Camera2WorldCalibrate:
                     # y轴偏差
                     robot_pose[1] = robot_pose[1] - 20
                     # 停留在上方
-                    robot_pose[2] = robot_pose[2] + 30
+                    robot_pose[2] = robot_pose[2] + 50
                     self.robot.send_position(robot_pose)
                     time.sleep(1)
 
@@ -769,7 +778,7 @@ class Camera2WorldCalibrate:
                 depth = images['aligned_depth']
 
                 # 显示操作提示
-                cv2.putText(rgb, "ESC:exit | s:save | r:clear", (10, 30),
+                cv2.putText(rgb, "ESC:exit | s:save | r:clear | h:home", (10, 30),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
 
                 # 显示窗口并绑定鼠标事件
@@ -828,8 +837,8 @@ class Camera2WorldCalibrate:
 
 if __name__ == '__main__':
     cam_id = 246422072474
-    # checkerboard_offset_from_tool = [0.065, -0.003, 0.002]
-    checkerboard_offset_from_tool = [0.0, 0.0, 0.0]
+    checkerboard_offset_from_tool = [0.065, -0.003, 0.002]
+    # checkerboard_offset_from_tool = [0.0, 0.0, 0.0]
     workspace_limits = np.asarray([[0.31, 0.41], [-0.1, 0.1], [0.05, 0.25]])
     calib_grid_step = 0.05
     calibrate_camera = Camera2WorldCalibrate(cam_id=cam_id,
@@ -837,7 +846,6 @@ if __name__ == '__main__':
                                              checkerboard_offset_from_tool=checkerboard_offset_from_tool,
                                              workspace_limits=workspace_limits)
     # calibrate_camera.run()
-    data_save_dir = r'D:\PycharmProjects\robotic-grasping\calibrate\data\20250820005636'
-    # calibrate_camera.run_offline(data_save_dir=data_save_dir, max_img_num=80)
-
-    calibrate_camera.verify_calibration_by_realsense_camera(data_save_dir=data_save_dir, move_robot=False)
+    data_save_dir = r'D:\PycharmProjects\robotic-grasping\calibrate\data\20250821003411'
+    calibrate_camera.run_offline(data_save_dir=data_save_dir, max_img_num=80)
+    calibrate_camera.verify_calibration_by_realsense_camera(data_save_dir=data_save_dir, move_robot=True)

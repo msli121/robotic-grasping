@@ -11,7 +11,6 @@ import re
 import shutil
 from scipy.spatial.transform import Rotation as R
 
-
 import cv2
 import numpy as np
 
@@ -21,6 +20,7 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+np.set_printoptions(precision=8, suppress=True)
 
 
 def euler_to_rotation_matrix_scipy(rx, ry, rz, order='zyx', degrees=False):
@@ -44,6 +44,42 @@ def euler_to_rotation_matrix_scipy(rx, ry, rz, order='zyx', degrees=False):
 
     rotation_obj = R.from_euler(order, angles_in_order, degrees=degrees)
     return rotation_obj.as_matrix()
+
+
+def pose_to_homogeneous_matrix(pose, order='zyx'):
+    x, y, z, rx, ry, rz = pose
+    R = euler_to_rotation_matrix_scipy(rx, ry, rz, order=order)
+    t = np.array([x, y, z]).reshape(3, 1)
+    H = np.eye(4)
+    H[:3, :3] = R
+    H[:3, 3] = t[:, 0]
+    return H
+
+
+def robot_pose_to_homogeneous_matrix(robot_pose, order='zyx'):
+    """
+    将机器人位姿转换为齐次变换矩阵。
+
+    参数:
+    robot_pose (list): 机器人位姿，包含6个元素 [x, y, z, rx, ry, rz]，
+                       分别为位置和欧拉角（位置单位为毫米 默认单位为度）。
+    order (str): 欧拉角的旋转顺序，默认'zyx'。
+    degrees (bool): 如果为True，则输入角度单位为度；否则为弧度。
+
+    返回:
+    np.ndarray: 4x4的齐次变换矩阵。
+    """
+    # 判断输入是否为列表 或者 np的一维数组
+    if not isinstance(robot_pose, (list, np.ndarray)):
+        raise ValueError("输入必须是一个列表或 numpy 数组")
+    if len(robot_pose) != 6:
+        raise ValueError("输入列表必须包含6个元素")
+    # 前3个毫米转米
+    robot_pose[:3] = np.array(robot_pose[:3]) / 1000
+    # 后3个度转弧度
+    robot_pose[3:] = np.deg2rad(robot_pose[3:])
+    # 转换为齐次变换矩阵
+    return pose_to_homogeneous_matrix(robot_pose, order=order)
 
 
 def normalize_corner_order(corners, checkerboard_size):
@@ -297,11 +333,36 @@ def detect_and_save_corners(rgb_image_path, check_direction=True):
 
 # 使用示例
 if __name__ == "__main__":
-    print(euler_to_rotation_matrix_scipy(0, 0, 0))
-    # 处理captures目录下的文件（可根据实际情况修改）
-    source_dir = "./captures"
-    # 处理拍摄的照片文件
-    process_checkerboard_and_pose_data(source_dir)
+    # print(euler_to_rotation_matrix_scipy(0, 0, 0))
+    # # 处理captures目录下的文件（可根据实际情况修改）
+    # source_dir = "./captures"
+    # # 处理拍摄的照片文件
+    # process_checkerboard_and_pose_data(source_dir)
+
+    # 标定板坐标系到法兰盘坐标系的变换矩阵
+    robot_pose = [-19.3485, -79.2081, 199.392, -90, 0.0, 90]
+    # pose = [-0.01935, -0.0c, 0.1994, - np.pi / 2, 0, np.pi / 2]
+    M_flange_board = robot_pose_to_homogeneous_matrix(robot_pose, order='xyz')
+    print("标定板坐标系到法兰盘坐标系的变换矩阵")
+    print(M_flange_board)
+
+    board_pose = np.asarray([0.018, 0.018, 0.0, 1]).reshape((4, 1))
+    robot_pose = M_flange_board @ board_pose
+    print(f"标定板 => 法兰盘 {board_pose.flatten()[:3]} => {robot_pose.flatten()[:3]}")
+
+    # 法兰盘坐标系到世界坐标系的变换矩阵
+    flange_pose = [208.18, 71.42, 245.75, -152.60, -67.49, -38.95]
+    M_base_flange = robot_pose_to_homogeneous_matrix(flange_pose, order='xyz')
+    print("法兰盘坐标系到世界坐标系的变换矩阵")
+    print(M_base_flange)
+
+    M_base_board = M_base_flange @ M_flange_board
+    print("标定板坐标系到机械臂基坐标系的变换矩阵")
+    print(M_base_board)
+
+    board_pos = np.asarray([0, 0, 0, 1]).reshape((4, 1))
+    robot_pos = M_base_flange @ M_flange_board @ board_pos
+    print(f"标定板 => 机械臂 {board_pos.flatten()[:3]} => {robot_pos.flatten()[:3]}")
 
     # captures_dir = "./captures"
     # # 确保目录存在

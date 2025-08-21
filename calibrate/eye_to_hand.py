@@ -13,7 +13,7 @@ import cv2
 from scipy.spatial.transform import Rotation as R
 import numpy as np
 
-from calibrate.utils import normalize_corner_order
+from calibrate.utils import normalize_corner_order, pose_to_homogeneous_matrix, robot_pose_to_homogeneous_matrix
 from hardware.camera import RealSenseCamera
 from robot.densor_robot import DensorRobot
 
@@ -67,14 +67,14 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 class EyeToHand:
     def __init__(self, camera_id,
                  chessboard_size,
-                 chessboard_step,
-                 chessboard_offset_from_tool,
-                 workspace_limits):
+                 chessboard_grid_size,
+                 workspace_limits,
+                 workspace_step_size=0.05):
         self.camera_id = camera_id
         self.chessboard_size = chessboard_size
-        self.chessboard_step = chessboard_step
-        self.chessboard_offset_from_tool = chessboard_offset_from_tool
+        self.chessboard_step = chessboard_grid_size
         self.workspace_limits = workspace_limits
+        self.workspace_step_size = workspace_step_size
 
         # 相机
         self.camera = RealSenseCamera(device_id=camera_id)
@@ -84,20 +84,23 @@ class EyeToHand:
         # 标定板到机械臂基坐标系的变换矩阵
         self.T_base_board = np.eye(4)
 
-    def _generate_grid(self):
+    @staticmethod
+    def generate_grid(workspace_limits, workspace_step_size=0.05):
         """
         Construct 3D calibration grid across workspace
         生成机械臂工作空间中的3D网格点
+        :param workspace_limits: 工作空间限制
+        :param workspace_step_size: 工作空间步长
         :return calibration grid points
         """
         # 将计算出的样本数量转换为整数
-        x_num = int(np.round(1 + (self.workspace_limits[0][1] - self.workspace_limits[0][0]) / self.calib_grid_step))
-        y_num = int(np.round(1 + (self.workspace_limits[1][1] - self.workspace_limits[1][0]) / self.calib_grid_step))
-        z_num = int(np.round(1 + (self.workspace_limits[2][1] - self.workspace_limits[2][0]) / self.calib_grid_step))
+        x_num = int(np.round(1 + (workspace_limits[0][1] - workspace_limits[0][0]) / workspace_step_size))
+        y_num = int(np.round(1 + (workspace_limits[1][1] - workspace_limits[1][0]) / workspace_step_size))
+        z_num = int(np.round(1 + (workspace_limits[2][1] - workspace_limits[2][0]) / workspace_step_size))
 
-        gridspace_x = np.linspace(self.workspace_limits[0][0], self.workspace_limits[0][1], x_num)
-        gridspace_y = np.linspace(self.workspace_limits[1][0], self.workspace_limits[1][1], y_num)
-        gridspace_z = np.linspace(self.workspace_limits[2][0], self.workspace_limits[2][1], z_num)
+        gridspace_x = np.linspace(workspace_limits[0][0], workspace_limits[0][1], x_num)
+        gridspace_y = np.linspace(workspace_limits[1][0], workspace_limits[1][1], y_num)
+        gridspace_z = np.linspace(workspace_limits[2][0], workspace_limits[2][1], z_num)
 
         calib_grid_x, calib_grid_y, calib_grid_z = np.meshgrid(gridspace_x, gridspace_y, gridspace_z)
         num_calib_grid_pts = calib_grid_x.shape[0] * calib_grid_x.shape[1] * calib_grid_x.shape[2]
@@ -118,7 +121,7 @@ class EyeToHand:
         os.makedirs(data_save_dir, exist_ok=True)
 
         # 计算空间坐标点
-        calib_grid_pts = self._generate_grid()
+        calib_grid_pts = EyeToHand.generate_grid(self.workspace_limits, self.workspace_step_size)
         logger.info(f'工作空间总点数: {calib_grid_pts.shape[0]}')
 
         # 连接相机
@@ -134,7 +137,8 @@ class EyeToHand:
         # 连接机器人
         logger.info(f"开始连接机器人...")
         self.robot.connect()
-        home_position = [300.0, 5, 200.0, 127, 76, 122, 1]
+        # home_position = [300.0, 5, 200.0, 127, 76, 122, 1]
+        home_position = [220, 5, 200.0, -123, -75, -60, 9]
         # 机器人移动到默认位置
         self.robot.send_position(home_position)
         # 等待机械臂到达指定位置
@@ -147,9 +151,9 @@ class EyeToHand:
             robot_position.extend(home_position[3:])
 
             # 随机调整角度 -10 ~ 10
-            robot_position[3] = random.randint(-10, 10)
-            robot_position[4] = random.randint(-10, 10)
-            robot_position[5] = random.randint(-10, 10)
+            robot_position[3] += random.randint(-10, 10)
+            robot_position[4] += random.randint(-10, 10)
+            robot_position[5] += random.randint(-10, 10)
 
             logger.info(f'\n\n位置{index:02d} 开始移动到指定位置: {robot_position}')
 
@@ -226,6 +230,11 @@ class EyeToHand:
                 logger.error(f"位置{index:02d} 标定板未找到角点")
                 continue
 
+        # 回到默认点
+        self.robot.send_position(home_position)
+        # 等待机械臂到达指定位置
+        time.sleep(2)
+
         return data_save_dir
 
     def do_calibrate(self, collect_data_dir=None, M_base_chessboard=None):
@@ -237,6 +246,8 @@ class EyeToHand:
         """
         if not collect_data_dir or not os.path.exists(collect_data_dir):
             raise ValueError("采集数据文件夹路径不存在")
+        if not M_base_chessboard:
+            raise ValueError("标定板坐标系到机械臂基座标的变换矩阵未指定")
         if not M_base_chessboard:
             raise ValueError("标定板坐标系到机械臂基座标的变换矩阵未指定")
         if not os.path.exists(os.path.join(collect_data_dir, 'camera_matrix.txt')):
@@ -252,9 +263,27 @@ class EyeToHand:
         if len(rgb_files) != len(depth_files) or len(rgb_files) != len(robot_pose_files):
             raise ValueError("采集数据文件夹中文件数量不一致")
 
+        # 解析机械臂位姿，获取法兰盘坐标系到机械臂基坐标系的变换矩阵 M_base_flange
+        M_base_flange = []
+        for pose_file in robot_pose_files:
+            pose = np.loadtxt(pose_file, delimiter=' ')
+            pose = pose[:6]
+            # 前三个元素 mm -> m
+            pose[:3] /= 1000
+            # 后三个度转弧度
+            pose[3:] = np.deg2rad(pose[3:])
+            # 转换为齐次坐标
+            M_base_flange.append(pose_to_homogeneous_matrix(pose, order='zyx'))
+        M_base_flange = np.array(M_base_flange)
+
         # 读取相机参数
         mtx = np.loadtxt(os.path.join(collect_data_dir, 'camera_matrix.txt'))
         dist = np.loadtxt(os.path.join(collect_data_dir, 'distortion_coeffs.txt'))
+
+        # 设置标定板坐标系下的点坐标，所有点的Z坐标全部为0，只需要赋值x和y
+        objp = np.zeros((self.chessboard_size[0] * self.chessboard_size[1], 3), np.float32)
+        objp[:, :2] = np.mgrid[0:self.chessboard_size[0], 0:self.chessboard_size[1]].T.reshape(-1,
+                                                                                               2) * self.chessboard_step
 
 
 def euler_angles_to_rotation_matrix(rx, ry, rz):
@@ -273,39 +302,6 @@ def euler_angles_to_rotation_matrix(rx, ry, rz):
     # zyx
     # R = Rx @ Ry @ Rz
     return R
-
-
-def euler_to_rotation_matrix_scipy(rx, ry, rz, order='zyx', degrees=False):
-    """
-    【推荐】使用scipy库将欧拉角转换为旋转矩阵，健壮且高效。
-
-    参数:
-    rx, ry, rz (float): 分别绕X, Y, Z轴的旋转角度。
-    order (str): 欧拉角的旋转顺序。对于机器人，这通常是'zyx'（内旋）。
-                 Scipy支持所有12种序列: 'xyz', 'xzy', 'yxz', 'yzx', 'zxy', 'zyx'
-                 以及 'xyx', 'xzx', 'yxy', 'yzy', 'zxz', 'zyz'。
-    degrees (bool): 如果为True，则输入角度单位为度；否则为弧度。
-
-    返回:
-    np.ndarray: 3x3的旋转矩阵。
-    """
-    # 注意：scipy的from_euler函数需要一个与order字符串顺序匹配的角度列表。
-    # 例如，如果order是'zyx'，角度列表必须是[rz, ry, rx]。
-    angle_map = {'x': rx, 'y': ry, 'z': rz}
-    angles_in_order = [angle_map[axis] for axis in order]
-
-    rotation_obj = R.from_euler(order, angles_in_order, degrees=degrees)
-    return rotation_obj.as_matrix()
-
-
-def pose_to_homogeneous_matrix(pose):
-    x, y, z, rx, ry, rz = pose
-    R = euler_to_rotation_matrix_scipy(rx, ry, rz)
-    t = np.array([x, y, z]).reshape(3, 1)
-    H = np.eye(4)
-    H[:3, :3] = R
-    H[:3, 3] = t[:, 0]
-    return H
 
 
 def inverse_transformation_matrix(T):
@@ -546,7 +542,7 @@ def compute_T(images_dir, pose_txt, corner_point_long, corner_point_short, corne
         )
         print(f"[{methods_dict[method]}] 相机坐标系到机械臂基坐标系的旋转矩阵:")
         print(R_cam2base)
-        print("[{methods_dict[method]}] 相机坐标系到机械臂基坐标系的平移向量:")
+        print(f"[{methods_dict[method]}] 相机坐标系到机械臂基坐标系的平移向量:")
         print(t_cam2base)
 
     # 选择最优结果 可自行选择
@@ -629,8 +625,8 @@ def verify_calibration_by_realsense_camera():
             raise FileNotFoundError("标定结果文件不完整，请检查calibrate_result目录")
 
         # 读取手眼标定结果（相机->基座外参）
-        R_cam2base = np.loadtxt(R_FILE)
-        T_cam2base = np.loadtxt(T_FILE).reshape(3, 1)
+        R_cam2base = np.loadtxt(R_FILE, delimiter=" ")
+        T_cam2base = np.loadtxt(T_FILE, delimiter=" ").reshape(3, 1)
 
         # 验证矩阵维度
         if R_cam2base.shape != (3, 3):
@@ -782,20 +778,38 @@ def verify_calibration_by_realsense_camera():
 
 
 if __name__ == '__main__':
-    images_dir = "./chessboard_images"  # 手眼标定采集的标定版图片所在路径
-    robot_tcp_pose_path = "./robot_tcp_pose.txt"  # 采集标定板图片时对应的机械臂末端的位姿 从 第一行到最后一行 需要和采集的标定板的图片顺序进行对应
-    corner_point_long = 8  # 标定板角点数量  长边
-    corner_point_short = 8
-    corner_point_size = 0.018  # 标定板方格真实尺寸 单位 m
+    #  ===================== 本示例中变换矩阵都按 M_B_A 表示，代表坐标系A到坐标系B的变换矩阵 ======================
 
-    # 获取相机内参
-    get_and_save_camera_matrix()
-    # 手眼标定 眼在手外 获取相机坐标系到机械臂基坐标系下的变换矩阵
-    R_cam2base, T_cam2base, mtx, dist = compute_T(images_dir,
-                                                  robot_tcp_pose_path,
-                                                  corner_point_long,
-                                                  corner_point_short,
-                                                  corner_point_size)
+    # 标定板坐标系到法兰盘坐标系的变换矩阵
+    robot_pose = [-19.3485, -79.2081, 199.392, -90, 0.0, 90]
+    M_flange_board = robot_pose_to_homogeneous_matrix(robot_pose, order='xyz')
+    logger.info(f"标定板坐标系到法兰盘坐标系的变换矩阵：\n{robot_pose}")
+
+    # images_dir = "./chessboard_images"  # 手眼标定采集的标定版图片所在路径
+    # robot_tcp_pose_path = "./robot_tcp_pose.txt"  # 采集标定板图片时对应的机械臂末端的位姿 从 第一行到最后一行 需要和采集的标定板的图片顺序进行对应
+    chessboard_size = (8, 8)  # 水平方向内角度个数 * 垂直方向内角度个数
+    chessboard_grid_size = 0.018  # 标定板方格真实尺寸 单位 m
+    workspace_limits = np.asarray([[0.23, 0.33], [-0.05, 0.1], [0.05, 0.25]])
+    workspace_step_size = 0.05
+    eye_to_hand = EyeToHand(
+        camera_id=246422072474,
+        chessboard_size=chessboard_size,
+        chessboard_grid_size=chessboard_grid_size,
+        workspace_limits=workspace_limits,
+        workspace_step_size=workspace_step_size)
+    # 自动移动机械臂收集数据
+    data_dir = eye_to_hand.collect_data()
+
+    # # 获取相机内参
+    # get_and_save_camera_matrix()
+    # # 手眼标定 眼在手外 获取相机坐标系到机械臂基坐标系下的变换矩阵
+    # R_cam2base, T_cam2base, mtx, dist = compute_T(images_dir,
+    #                                               robot_tcp_pose_path,
+    #                                               corner_point_long,
+    #                                               corner_point_short,
+    #                                               corner_point_size)
+    # np.savetxt("./calibrate_result/R_cam2base.txt", R_cam2base, delimiter=" ", fmt="%.6f")
+    # np.savetxt("./calibrate_result/T_cam2base.txt", T_cam2base, delimiter=" ", fmt="%.6f")
 
     # 验证标定结果
     # image_path = "D:\\PycharmProjects\\robotic-grasping\\calibrate\\chessboard_images\\1.png"
@@ -809,4 +823,4 @@ if __name__ == '__main__':
     #                             square_size=corner_point_size,
     #                             )
 
-    verify_calibration_by_realsense_camera()
+    # verify_calibration_by_realsense_camera()

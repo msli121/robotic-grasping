@@ -23,6 +23,24 @@ logger = logging.getLogger(__name__)
 np.set_printoptions(precision=8, suppress=True)
 
 
+def euler_angles_to_rotation_matrix(rx, ry, rz):
+    # 计算旋转矩阵
+    Rx = np.array([[1, 0, 0],
+                   [0, np.cos(rx), -np.sin(rx)],
+                   [0, np.sin(rx), np.cos(rx)]])
+    Ry = np.array([[np.cos(ry), 0, np.sin(ry)],
+                   [0, 1, 0],
+                   [-np.sin(ry), 0, np.cos(ry)]])
+    Rz = np.array([[np.cos(rz), -np.sin(rz), 0],
+                   [np.sin(rz), np.cos(rz), 0],
+                   [0, 0, 1]])
+    # zyx
+    R = Rz @ Ry @ Rx
+    # xyz
+    # R = Rx @ Ry @ Rz
+    return R
+
+
 def euler_to_rotation_matrix_scipy(rx, ry, rz, order='zyx', degrees=False):
     """
     【推荐】使用scipy库将欧拉角转换为旋转矩阵，健壮且高效。
@@ -341,14 +359,16 @@ if __name__ == "__main__":
 
     # 标定板坐标系到法兰盘坐标系的变换矩阵
     robot_pose = [-19.3485, -79.2081, 199.392, -90, 0.0, 90]
-    # pose = [-0.01935, -0.0c, 0.1994, - np.pi / 2, 0, np.pi / 2]
+    # pose = [-0.01935, -0.0, 0.1994, - np.pi / 2, 0, np.pi / 2]
     M_flange_board = robot_pose_to_homogeneous_matrix(robot_pose, order='xyz')
     print("标定板坐标系到法兰盘坐标系的变换矩阵")
     print(M_flange_board)
 
-    board_pose = np.asarray([0.018, 0.018, 0.0, 1]).reshape((4, 1))
-    robot_pose = M_flange_board @ board_pose
-    print(f"标定板 => 法兰盘 {board_pose.flatten()[:3]} => {robot_pose.flatten()[:3]}")
+    # test_board_pose = [0.018, 0.018, 0.0, 1]
+    test_board_pose = [0.0, 0.0, 0.0, 1]
+    test_board_pose = np.asarray(test_board_pose).reshape((4, 1))
+    robot_pose = M_flange_board @ test_board_pose
+    print(f"标定板 => 法兰盘 {test_board_pose.flatten()[:3]} => {robot_pose.flatten()[:3]}")
 
     # 法兰盘坐标系到世界坐标系的变换矩阵
     flange_pose = [208.18, 71.42, 245.75, -152.60, -67.49, -38.95]
@@ -360,9 +380,10 @@ if __name__ == "__main__":
     print("标定板坐标系到机械臂基坐标系的变换矩阵")
     print(M_base_board)
 
-    board_pos = np.asarray([0, 0, 0, 1]).reshape((4, 1))
-    robot_pos = M_base_flange @ M_flange_board @ board_pos
-    print(f"标定板 => 机械臂 {board_pos.flatten()[:3]} => {robot_pos.flatten()[:3]}")
+    # 标定板坐标系到机械臂基坐标系的变换矩阵
+    robot_pos = M_base_flange @ M_flange_board @ test_board_pose
+    # [0 0 0] => [0.40530398 0.12049056 0.17405847]
+    print(f"标定板 => 机械臂 {test_board_pose.flatten()[:3]} => {robot_pos.flatten()[:3]}")
 
     # captures_dir = "./captures"
     # # 确保目录存在

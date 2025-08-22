@@ -57,8 +57,6 @@ def robot_pose_to_homogeneous_matrix(robot_pose, order='zyx'):
     参数:
     robot_pose (list): 机器人位姿，包含6个元素 [x, y, z, rx, ry, rz]，
                        分别为位置和欧拉角（位置单位为毫米 默认单位为度）。
-    order (str): 欧拉角的旋转顺序，默认'zyx'。
-    degrees (bool): 如果为True，则输入角度单位为度；否则为弧度。
 
     返回:
     np.ndarray: 4x4的齐次变换矩阵。
@@ -335,7 +333,7 @@ if __name__ == "__main__":
     # 标定板坐标系到法兰盘坐标系的变换矩阵
     robot_pose = [-19.3485, -79.2081, 199.392, -90, 0.0, 90]
     # pose = [-0.01935, -0.0, 0.1994, - np.pi / 2, 0, np.pi / 2]
-    M_flange_board = robot_pose_to_homogeneous_matrix(robot_pose, order='ZYX')
+    M_flange_board = robot_pose_to_homogeneous_matrix(robot_pose, order='zyx')
     print("标定板坐标系到法兰盘坐标系的变换矩阵")
     print(M_flange_board)
 
@@ -347,7 +345,7 @@ if __name__ == "__main__":
 
     # 法兰盘坐标系到世界坐标系的变换矩阵
     flange_pose = [208.18, 71.42, 245.75, -152.60, -67.49, -38.95]
-    M_base_flange = robot_pose_to_homogeneous_matrix(flange_pose, order='ZYX')
+    M_base_flange = robot_pose_to_homogeneous_matrix(flange_pose, order='zyx')
     print("法兰盘坐标系到世界坐标系的变换矩阵")
     print(M_base_flange)
 

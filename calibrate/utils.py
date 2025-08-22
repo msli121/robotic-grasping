@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 np.set_printoptions(precision=8, suppress=True)
 
 
-def euler_angles_to_rotation_matrix(rx, ry, rz):
+def euler_angles_to_rotation_matrix(rx, ry, rz, order='zyx'):
     # 计算旋转矩阵
     Rx = np.array([[1, 0, 0],
                    [0, np.cos(rx), -np.sin(rx)],
@@ -34,39 +34,15 @@ def euler_angles_to_rotation_matrix(rx, ry, rz):
     Rz = np.array([[np.cos(rz), -np.sin(rz), 0],
                    [np.sin(rz), np.cos(rz), 0],
                    [0, 0, 1]])
-    # zyx
-    R = Rz @ Ry @ Rx
-    # xyz
-    # R = Rx @ Ry @ Rz
+    if order == 'zyx':
+        R = Rx @ Ry @ Rz
+    else:
+        R = Rz @ Ry @ Rx
     return R
-
-
-def euler_to_rotation_matrix_scipy(rx, ry, rz, order='zyx', degrees=False):
-    """
-    【推荐】使用scipy库将欧拉角转换为旋转矩阵，健壮且高效。
-
-    参数:
-    rx, ry, rz (float): 分别绕X, Y, Z轴的旋转角度。
-    order (str): 欧拉角的旋转顺序。对于机器人，这通常是'zyx'（内旋）。
-                 Scipy支持所有12种序列: 'xyz', 'xzy', 'yxz', 'yzx', 'zxy', 'zyx'
-                 以及 'xyx', 'xzx', 'yxy', 'yzy', 'zxz', 'zyz'。
-    degrees (bool): 如果为True，则输入角度单位为度；否则为弧度。
-
-    返回:
-    np.ndarray: 3x3的旋转矩阵。
-    """
-    # 注意：scipy的from_euler函数需要一个与order字符串顺序匹配的角度列表。
-    # 例如，如果order是'zyx'，角度列表必须是[rz, ry, rx]。
-    angle_map = {'x': rx, 'y': ry, 'z': rz}
-    angles_in_order = [angle_map[axis] for axis in order]
-
-    rotation_obj = R.from_euler(order, angles_in_order, degrees=degrees)
-    return rotation_obj.as_matrix()
-
 
 def pose_to_homogeneous_matrix(pose, order='zyx'):
     x, y, z, rx, ry, rz = pose
-    R = euler_to_rotation_matrix_scipy(rx, ry, rz, order=order)
+    R = euler_angles_to_rotation_matrix(rx, ry, rz, order=order)
     t = np.array([x, y, z]).reshape(3, 1)
     H = np.eye(4)
     H[:3, :3] = R
@@ -351,7 +327,6 @@ def detect_and_save_corners(rgb_image_path, check_direction=True):
 
 # 使用示例
 if __name__ == "__main__":
-    # print(euler_to_rotation_matrix_scipy(0, 0, 0))
     # # 处理captures目录下的文件（可根据实际情况修改）
     # source_dir = "./captures"
     # # 处理拍摄的照片文件
@@ -360,19 +335,19 @@ if __name__ == "__main__":
     # 标定板坐标系到法兰盘坐标系的变换矩阵
     robot_pose = [-19.3485, -79.2081, 199.392, -90, 0.0, 90]
     # pose = [-0.01935, -0.0, 0.1994, - np.pi / 2, 0, np.pi / 2]
-    M_flange_board = robot_pose_to_homogeneous_matrix(robot_pose, order='xyz')
+    M_flange_board = robot_pose_to_homogeneous_matrix(robot_pose, order='ZYX')
     print("标定板坐标系到法兰盘坐标系的变换矩阵")
     print(M_flange_board)
 
-    # test_board_pose = [0.018, 0.018, 0.0, 1]
-    test_board_pose = [0.0, 0.0, 0.0, 1]
+    test_board_pose = [0.018*5, 0.018*5, 0.0, 1]
+    # test_board_pose = [0.0, 0.0, 0.0, 1]
     test_board_pose = np.asarray(test_board_pose).reshape((4, 1))
     robot_pose = M_flange_board @ test_board_pose
     print(f"标定板 => 法兰盘 {test_board_pose.flatten()[:3]} => {robot_pose.flatten()[:3]}")
 
     # 法兰盘坐标系到世界坐标系的变换矩阵
     flange_pose = [208.18, 71.42, 245.75, -152.60, -67.49, -38.95]
-    M_base_flange = robot_pose_to_homogeneous_matrix(flange_pose, order='xyz')
+    M_base_flange = robot_pose_to_homogeneous_matrix(flange_pose, order='ZYX')
     print("法兰盘坐标系到世界坐标系的变换矩阵")
     print(M_base_flange)
 

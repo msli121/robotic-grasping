@@ -62,6 +62,8 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # 如果TCP标定不准: 您会看到探针的尖端在空中画出一个明显的小圆弧或小轨迹。这个圆弧的半径大小，就直观地反映了您TCP标定的误差大小。
 # 结论: 如果笔尖基本不动，恭喜您，TCP标定非常成功。如果画圆明显，请放弃这个TCP，回到第一部分，重新进行一次更精确的标定。
 
+# 标定板摆放
+# 将棋盘格倾斜摆放时，例如给它一个20-40度的倾斜角（相对于相机的Z轴），产生Z轴上一定的高度差
 
 # ==============================================================================
 #                        核心计算与验证函数 (保持不变)
@@ -490,7 +492,7 @@ if __name__ == '__main__':
     logger.info(">>> 正在执行单点反投影数据采集...")
     collector.collect_by_single_point_projection()
 
-    # --- 3. 计算与对比阶段 ---
+    # --- 3. 计算阶段 ---
     # 输入已知的 M_base_wobj
     M_base_wobj = np.array([
         [1, 0, 0, 0.5],
@@ -506,8 +508,7 @@ if __name__ == '__main__':
     # 步骤2: 变换到Base坐标
     points_in_base = transform_points_form_work2base(points_in_wobj, M_base_wobj)
 
-    # --- 对比实验 ---
-
+    # --- 4. 对比实验 ---
     # === 使用 SolvePnP 的数据进行计算 ===
     logger.info("\n\n" + "#" * 20 + " 使用 SolvePnP 数据进行计算 " + "#" * 20)
     cam_file_solvepnp = os.path.join(save_dir, "all_points_camera_solvepnp.txt")

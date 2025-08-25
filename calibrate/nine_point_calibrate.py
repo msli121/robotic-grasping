@@ -36,24 +36,93 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # ==============================================================================
 #                        核心计算与验证函数 (保持不变)
 # ==============================================================================
-def solve_procrustes(points_A, points_B):
-    if points_A.shape != points_B.shape or points_A.shape[0] < 3:
-        raise ValueError("输入点云不满足要求")
-    centroid_A = np.mean(points_A, axis=0)
-    centroid_B = np.mean(points_B, axis=0)
-    A_demeaned = points_A - centroid_A
-    B_demeaned = points_B - centroid_B
-    H = A_demeaned.T @ B_demeaned
-    U, S, Vt = np.linalg.svd(H)
-    R_mat = Vt.T @ U.T
-    if np.linalg.det(R_mat) < 0:
-        logger.warning("检测到反射，正在修正...")
-        Vt[-1, :] *= -1
-        R_mat = Vt.T @ U.T
-    t_vec = centroid_B - R_mat @ centroid_A
+def rigid_transform(src_pts, dst_pts, calc_scale=False):
+    """Calculates the optimal rigid transform from src_pts to dst_pts.
+
+    The returned transform minimizes the following least-squares problem
+        r = dst_pts - (R @ src_pts + t)
+        s = sum(r**2))
+
+    If calc_scale is True, the similarity transform is solved, with the residual being
+        r = dst_pts - (scale * R @ src_pts + t)
+    where scale is a scalar.
+
+    Parameters
+    ----------
+    src_pts: matrix of points stored as rows (e.g. Nx3)
+    dst_pts: matrix of points stored as rows (e.g. Nx3)
+    calc_scale: if True solve for scale
+
+    Returns
+    -------
+    R: rotation matrix
+    t: translation column vector
+    scale: scalar, scale=1.0 if calc_scale=False
+    """
+
+    dim = src_pts.shape[1]
+
+    if src_pts.shape != dst_pts.shape:
+        raise ValueError(
+            f"src and dst points aren't the same matrix size {src_pts.shape=} != {dst_pts.shape=}"
+        )
+
+    if not (dim == 2 or dim == 3):
+        raise ValueError(f"Points must be 2D or 3D, src_pts.shape[1] = {dim}")
+
+    if src_pts.shape[0] < dim:
+        raise ValueError(f"Not enough points, expect >= {dim} points")
+
+    # find mean/centroid
+    centroid_src = np.mean(src_pts, axis=0)
+    centroid_dst = np.mean(dst_pts, axis=0)
+
+    centroid_src = centroid_src.reshape(-1, dim)
+    centroid_dst = centroid_dst.reshape(-1, dim)
+
+    # subtract mean
+    # NOTE: doing src_pts -= centroid_src will modifiy input!
+    src_pts = src_pts - centroid_src
+    dst_pts = dst_pts - centroid_dst
+
+    # the cross-covariance matrix minus the mean calculation for each element
+    # https://en.wikipedia.org/wiki/Cross-covariance_matrix
+    H = src_pts.T @ dst_pts
+
+    rank = np.linalg.matrix_rank(H)
+
+    if dim == 2 and rank == 0:
+        raise ValueError(
+            f"Insufficent matrix rank. For 2D points expect rank >= 1 but got {rank}. Maybe your points are all the same?"
+        )
+    elif dim == 3 and rank <= 1:
+        raise ValueError(
+            f"Insufficent matrix rank. For 3D points expect rank >= 2 but got {rank}. Maybe your points are collinear?"
+        )
+
+    # find rotation
+    U, _, Vt = np.linalg.svd(H)
+    R = Vt.T @ U.T
+
+    # special reflection case
+    # https://en.wikipedia.org/wiki/Kabsch_algorithm
+    det = np.linalg.det(R)
+    if det < 0:
+        print(f"det(R) = {det}, reflection detected!, correcting for it ...")
+        S = np.eye(dim)
+        S[-1, -1] = -1
+        R = Vt.T @ S @ U.T
+
+    if calc_scale:
+        scale = np.sqrt(np.mean(dst_pts ** 2) / np.mean(src_pts ** 2))
+    else:
+        scale = 1.0
+
+    t = -scale * R @ centroid_src.T + centroid_dst.T
+
     M = np.eye(4)
-    M[:3, :3] = R_mat
-    M[:3, 3] = t_vec
+    M[:3, :3] = R
+    M[:3, 3] = t
     return M
 
 
@@ -72,6 +141,7 @@ def verify_transformation(M, points_A, points_B):
     logger.info(f"平均重投影误差: {np.mean(errors) * 1000:.4f} mm")
     logger.info(f"最大重投影误差: {np.max(errors) * 1000:.4f} mm")
     logger.info(f"误差标准差: {np.std(errors) * 1000:.4f} mm")
+    logger.info(f"RMSE 误差: {np.sqrt(np.mean(errors ** 2)) * 1000:.4f} mm")
 
 
 class CameraDataCollector:
@@ -411,10 +481,12 @@ if __name__ == '__main__':
     if os.path.exists(cam_file_solvepnp):
         all_points_in_camera = np.loadtxt(cam_file_solvepnp)
         if len(all_points_in_camera) == chessboard_size[0] * chessboard_size[1]:
-            cols = chessboard_size[1]
-            linear_indices = pix_index[:, 1] * cols + pix_index[:, 0]
+            # 获取列数
+            num_cols = chessboard_size[0]
+            linear_indices = pix_index[:, 1] * num_cols + pix_index[:, 0]
             points_in_camera = all_points_in_camera[linear_indices]
-            M_base_camera = solve_procrustes(points_in_camera, points_in_base)
+            # 计算刚性变换
+            M_base_camera = rigid_transform(points_in_camera, points_in_base)
             logger.info(f"\n[SolvePnP法] 计算出的 M_base_camera:\n{M_base_camera}")
             verify_transformation(M_base_camera, points_in_camera, points_in_base)
         else:
@@ -428,10 +500,12 @@ if __name__ == '__main__':
     if os.path.exists(cam_file_single):
         all_points_in_camera = np.loadtxt(cam_file_single)
         if len(all_points_in_camera) == chessboard_size[0] * chessboard_size[1]:
-            cols = chessboard_size[1]
-            linear_indices = pix_index[:, 1] * cols + pix_index[:, 0]
+            # 获取列数
+            num_cols = chessboard_size[0]
+            linear_indices = pix_index[:, 1] * num_cols + pix_index[:, 0]
             points_in_camera = all_points_in_camera[linear_indices]
-            M_base_camera = solve_procrustes(points_in_camera, points_in_base)
+            # 计算刚性变换
+            M_base_camera = rigid_transform(points_in_camera, points_in_base)
             logger.info(f"\n[单点法] 计算出的 M_base_camera:\n{M_base_camera}")
             verify_transformation(M_base_camera, points_in_camera, points_in_base)
         else:

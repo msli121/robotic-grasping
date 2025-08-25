@@ -252,9 +252,20 @@ class CameraDataCollector:
                 return
 
             criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
-            corners_refined = cv2.cornerSubPix(gray_image, corners, (11, 11), (-1, -1), criteria)
+            corners = cv2.cornerSubPix(gray_image, corners, (11, 11), (-1, -1), criteria)
 
-            ret_pnp, rvec, tvec = cv2.solvePnP(objp, corners_refined, self.cam_matrix, self.dist_coeffs)
+            # 角度归一化
+            corners = normalize_corner_order(corners, chessboard_size)
+            # 显示角点
+            cv2.drawChessboardCorners(color_image, chessboard_size, corners, ret)
+            cv2.imshow("Detected Corners", color_image)
+            cv2.waitKey(3000)
+            cv2.destroyAllWindows()
+            # 保存角点
+            cv2.imwrite(os.path.join(self.save_dir, "solvePnP_corners_detection.png"), color_image)
+
+            # 计算相机位姿
+            ret_pnp, rvec, tvec = cv2.solvePnP(objp, corners, self.cam_matrix, self.dist_coeffs)
             if not ret_pnp:
                 logger.error("solvePnP计算失败！")
                 return
@@ -272,9 +283,6 @@ class CameraDataCollector:
             cam_file = os.path.join(self.save_dir, "all_points_camera_solvepnp.txt")
             np.savetxt(cam_file, points_in_camera_all, fmt="%.8f")
             logger.info(f"所有 {len(points_in_camera_all)} 个角点的相机3D坐标 (solvePnP法) 已保存至: {cam_file}")
-
-            cv2.drawChessboardCorners(color_image, chessboard_size, corners_refined, ret)
-            cv2.imwrite(os.path.join(self.save_dir, "corners_detection_check.png"), color_image)
 
         finally:
             self.disconnect_camera()
@@ -320,15 +328,15 @@ class CameraDataCollector:
 
             logger.info(f"成功检测到并精化了 {len(corners)} 个角点。")
 
-            # 归一化角点顺序
+            # 角度归一化
             corners = normalize_corner_order(corners, chessboard_size)
-            logger.info("角点顺序已归一化")
-
-            # 显示角点，3s后自动关闭
+            # 显示角点
             cv2.drawChessboardCorners(color_image, chessboard_size, corners, ret)
             cv2.imshow("Detected Corners", color_image)
             cv2.waitKey(3000)
             cv2.destroyAllWindows()
+            # 保存角点
+            cv2.imwrite(os.path.join(self.save_dir, "projection_corners_detection.png"), color_image)
 
             # 3. 遍历每个角点，查询深度并反投影
             points_in_camera = []
@@ -353,20 +361,13 @@ class CameraDataCollector:
                 points_in_camera.append(point_camera)
                 valid_corners_uv.append((u, v))
 
-                logger.info(f"角点 {i}: (u,v)=({u:.2f}, {v:.2f}) -> 深度={depth:.4f}m -> P_cam={point_camera}")
+                logger.info(f"[反投影法] 角点 {i}: (u,v)=({u:.2f}, {v:.2f}) -> 深度={depth:.4f}m -> P_cam={point_camera}")
 
             # 4. 保存结果
             points_cam_arr = np.array(points_in_camera)
             cam_file = os.path.join(self.save_dir, "all_points_camera_projection.txt")
             np.savetxt(cam_file, points_cam_arr, fmt="%.8f")
             logger.info(f"采集到的 {len(points_cam_arr)} 个有效相机3D坐标 (自动反投影法) 已保存至: {cam_file}")
-
-            # 保存一张带有角点标记（仅限有效点）的图片用于检查
-            check_image = color_image.copy()
-            for u, v in valid_corners_uv:
-                cv2.circle(check_image, (int(round(u)), int(round(v))), 4, (0, 255, 0), -1)
-            cv2.imwrite(os.path.join(self.save_dir, "projection_auto_check.png"), check_image)
-
         finally:
             self.disconnect_camera()
 

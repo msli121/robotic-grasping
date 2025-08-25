@@ -361,11 +361,11 @@ class CameraDataCollector:
             np.savetxt(cam_file, points_cam_arr, fmt="%.8f")
             logger.info(f"采集到的 {len(points_cam_arr)} 个有效相机3D坐标 (自动反投影法) 已保存至: {cam_file}")
 
-            # # 保存一张带有角点标记（仅限有效点）的图片用于检查
-            # check_image = color_image.copy()
-            # for u, v in valid_corners_uv:
-            #     cv2.circle(check_image, (int(round(u)), int(round(v))), 4, (0, 255, 0), -1)
-            # cv2.imwrite(os.path.join(self.save_dir, "projection_auto_check.png"), check_image)
+            # 保存一张带有角点标记（仅限有效点）的图片用于检查
+            check_image = color_image.copy()
+            for u, v in valid_corners_uv:
+                cv2.circle(check_image, (int(round(u)), int(round(v))), 4, (0, 255, 0), -1)
+            cv2.imwrite(os.path.join(self.save_dir, "projection_auto_check.png"), check_image)
 
         finally:
             self.disconnect_camera()

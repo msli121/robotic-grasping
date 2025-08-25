@@ -21,6 +21,7 @@ import numpy as np
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 unused import
 from scipy import optimize
 
+from calibrate.utils import normalize_corner_order
 from hardware.camera import RealSenseCamera
 from robot.densor_robot import DensorRobot
 
@@ -95,79 +96,6 @@ class Camera2WorldCalibrate:
         self.observed_pix = []
         # 相机外参，相机坐标系到机械臂基坐标系的变换矩阵
         self.camera2world = np.eye(4)
-
-
-    @staticmethod
-    def normalize_corner_order(corners, checkerboard_size):
-        """
-        统一OpenCV棋盘格角点的检测顺序，确保总是从左上角开始，逐行扫描。
-
-        参数:
-        corners (np.ndarray): cv2.findChessboardCorners 或 cornerSubPix 返回的角点数组。
-                              形状应为 (rows*cols, 1, 2)。
-        checkerboard_size (tuple): 棋盘格的内角点数量，格式为 (cols, rows)，例如 (8, 8)。
-
-        返回:
-        np.ndarray: 顺序被归一化后的角点数组。
-        """
-        # 将角点数组展平以便于计算，形状变为 (N, 2)
-        corners_flat = np.squeeze(corners)
-
-        # 1. 利用几何特性找到四个最外侧的角点
-        # x+y 最小的是左上角
-        sum_xy = corners_flat.sum(axis=1)
-        top_left_idx = np.argmin(sum_xy)
-
-        # x+y 最大的是右下角
-        bottom_right_idx = np.argmax(sum_xy)
-
-        # x-y 最大的是右上角
-        diff_xy = np.diff(corners_flat, axis=1).flatten()
-        top_right_idx = np.argmax(diff_xy)
-
-        # y-x 最大的是左下角 (等价于 x-y 最小)
-        bottom_left_idx = np.argmin(diff_xy)
-
-        # 2. 判断检测到的第一个角点 corner[0] 是哪个物理角点
-        # 我们用索引来判断，因为浮点数直接比较可能不稳定
-        first_corner_idx = 0
-
-        # 获取检测顺序的起始角点
-        # 注意：为了处理可能的浮点误差，我们比较索引而不是坐标值
-        if first_corner_idx == top_left_idx:
-            # 理想情况：顺序已经是正确的 (左上角 -> 右下角)
-            # logger.debug("角点顺序正确 (TL-BR)")
-            return corners
-
-        elif first_corner_idx == top_right_idx:
-            # 情况2：顺序为 右上角 -> 左下角
-            # 需要对每一行进行水平翻转
-            # logger.debug("角点顺序修正 (TR-BL -> TL-BR)")
-            rows, cols = checkerboard_size[1], checkerboard_size[0]
-            # 保持原始数据类型和形状
-            corrected_corners = corners.reshape(rows, cols, 1, 2)
-            corrected_corners = corrected_corners[:, ::-1, :, :]  # 对列（cols）进行翻转
-            return corrected_corners.reshape(-1, 1, 2)
-
-        elif first_corner_idx == bottom_left_idx:
-            # 情况3：顺序为 左下角 -> 右上角
-            # 需要对整个数组进行垂直翻转
-            # logger.debug("角点顺序修正 (BL-TR -> TL-BR)")
-            return corners[::-1]
-
-        elif first_corner_idx == bottom_right_idx:
-            # 情况4：顺序为 右下角 -> 左上角
-            # 需要进行水平和垂直双重翻转
-            # logger.debug("角点顺序修正 (BR-TL -> TL-BR)")
-            corrected_corners = corners[::-1]  # 先垂直翻转
-            rows, cols = checkerboard_size[1], checkerboard_size[0]
-            corrected_corners = corrected_corners.reshape(rows, cols, 1, 2)
-            corrected_corners = corrected_corners[:, ::-1, :, :]
-            return corrected_corners.reshape(-1, 1, 2)
-        else:
-            # 这是一个异常情况，第一个角点不是四个角之一，可能检测有误
-            logger.warning("无法确定角点检测顺序，可能检测结果有误。")
-            return corners  # 返回原始值，让后续流程处理
 
     @staticmethod
     def pixel_to_camera_coordinate(x, y, depth, K):
@@ -289,6 +217,10 @@ class Camera2WorldCalibrate:
         fy = self.camera.K[1, 1]
         cx = self.camera.K[0, 2]
         cy = self.camera.K[1, 2]
+
+        self.observed_pts = np.asarray(self.observed_pts)
+        self.observed_pix = np.asarray(self.observed_pix)
+        self.measured_pts = np.asarray(self.measured_pts)
 
         observed_z = np.squeeze(self.observed_pts[:, 2:] * z_scale)
         observed_x = np.multiply(np.squeeze(self.observed_pix[:, [0]]) - cx, observed_z / fx)
@@ -834,6 +766,133 @@ class Camera2WorldCalibrate:
                         f.write(f"  基座坐标(未缩放): {res['base_coords_origin']}\n\n")
                 print(f"自动保存 {len(measurement_results)} 个测量结果到 {save_verify_results_file}")
 
+    def quick_test(self):
+        self.camera.connect()
+        time.sleep(1)
+        robot_pose = [
+            [490.77, 79.78, 13.36, -170.03, -23.79, -16.35, 1],
+            [490.77, 18.60, 14.13, -170.03, -23.79, -16.35, 1],
+            [491.03, -12.15, 14.18, -170.03, -23.79, -16.35, 1],
+            [440.50, 73.10, -9.96, 158.26, -4.75, 90.04, 1],
+            [440.50, 28.88, -9.25, 158.26, -4.75, 90.04, 1],
+            [442.23, -15.79, -8.16, 158.26, -4.75, 90.04, 1],
+            [391.34, 69.98, -32.64, 164.30, -4.30, 87.88, 1],
+            [391.08, 27.10, -31.36, 164.30, -4.30, 87.88, 1],
+            [392.61, -16.12, -31.21, 164.30, -4.30, 87.88, 1]
+        ]
+        conner_index = [
+            0, 3, 6,
+            24, 27, 30,
+            48, 51, 54,
+        ]
+        pix_index = [
+            [0, 0],
+            [3, 0],
+            [6, 0],
+            [3, 0],
+            [3, 3],
+            [3, 6],
+            [6, 0],
+            [6, 3],
+            [6, 6],
+        ]
+
+        K, dist = self.camera.get_K_and_dist()
+        fx = K[0, 0]
+        fy = K[1, 1]
+        cx = K[0, 2]
+        cy = K[1, 2]
+
+        # 寻找标定板中心坐标
+        checkerboard_size = (8, 8)
+        refine_criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
+
+        while True:
+            image_bundle = self.camera.get_image_bundle()
+            camera_color_img = image_bundle['rgb']
+            camera_depth_img = image_bundle['aligned_depth']
+            depth_max = camera_depth_img.max()
+            if depth_max < 1:
+                break
+
+        bgr_color_data = cv2.cvtColor(camera_color_img, cv2.COLOR_RGB2BGR)
+        gray_data = cv2.cvtColor(bgr_color_data, cv2.COLOR_RGB2GRAY)
+        checkerboard_found, corners = cv2.findChessboardCorners(gray_data, checkerboard_size, None,
+                                                                cv2.CALIB_CB_ADAPTIVE_THRESH)
+        if checkerboard_found and len(corners) == checkerboard_size[0] * checkerboard_size[1]:
+            corners = cv2.cornerSubPix(gray_data, corners, checkerboard_size, (-1, -1), refine_criteria)
+
+            # ==================== 调用归一化函数 ====================
+            # 无论OpenCV如何检测，都将其统一为“左上角起始，逐行扫描”的顺序
+            # (rows*cols, 1, 2)
+            # corners = normalize_corner_order(corners, checkerboard_size)
+            # ===============================================================
+            # 仅画出pix_index指定下标的角点
+            corners = corners[conner_index]
+            # 显示角点图像
+            bgr_color_img_copy = bgr_color_data.copy()
+            cv2.drawChessboardCorners(bgr_color_img_copy, checkerboard_size, corners,
+                                      checkerboard_found)
+            cv2.imshow("ImageWithCorners", bgr_color_img_copy)
+            cv2.waitKey(3000)
+            cv2.destroyAllWindows()
+            i = 0
+            for corner in corners:
+                checkerboard_pix = corner[0]
+                # 对应 checkerboard_pix 取整
+                checkerboard_pix = np.round(checkerboard_pix).astype(int)
+                # 像素坐标转相机坐标
+                camera_z = camera_depth_img[checkerboard_pix[1]][checkerboard_pix[0]]
+                camera_x = np.multiply(checkerboard_pix[0] - cx, camera_z / fx)
+                camera_y = np.multiply(checkerboard_pix[1] - cy, camera_z / fy)
+                # 保存像素坐标下的中心点坐标
+                self.observed_pix.append(checkerboard_pix)
+                logger.info(f"像素坐标系: {checkerboard_pix}")
+                # 保存相机坐标系的中心点坐标
+                camera_coord_center_point_position = np.array([camera_x, camera_y, camera_z])
+                camera_coord_center_point_position = camera_coord_center_point_position.flatten()
+                self.observed_pts.append(camera_coord_center_point_position)
+                logger.info(f"相机坐标系: {camera_coord_center_point_position}")
+
+                # 保存机械臂基坐标系下的中心点坐标
+                robot_position = robot_pose[i][:3]
+                robot_position = np.asarray(robot_position)
+                robot_position = robot_position / 1000
+                robot_position = np.round(robot_position, 6)
+                self.measured_pts.append(robot_position)
+                logger.info(f"机械臂基坐标系: {robot_position}")
+                i += 1
+
+        # 保证个数一致
+        if len(self.measured_pts) != len(self.observed_pts) != len(self.observed_pix):
+            logger.error('数据加载失败，点位信息数量不一致')
+            return
+
+        if len(self.observed_pts) != 9:
+            logger.error("数据点数不对")
+            return
+
+        # 通过最小化误差来标定相机深度偏移
+        logger.info(f'点位信息收集完毕，点位总个数={len(self.measured_pts)} 开始执行标定...')
+        z_scale_init = 1
+        optim_result = optimize.minimize(
+            self._get_rigid_transform_error,
+            np.asarray(z_scale_init),
+            bounds=[(0.85, 1.1)],  # 添加参数范围约束
+            method='Nelder-Mead'
+        )
+        camera_depth_offset = optim_result.x
+        logger.info(f'最优深度缩放系数为: {camera_depth_offset}')
+        rmse = self._get_rigid_transform_error(z_scale=camera_depth_offset)
+        logger.info(f'标定结果均方根误差(RMSE): {rmse}')
+        logger.info(f'camera2base: {np.round(self.camera2world, 6)}')
+        data_save_dir = os.path.join(BASE_DIR, 'test')
+        os.makedirs(data_save_dir, exist_ok=True)
+        camera_depth_scale_file = os.path.join(data_save_dir, f'camera_depth_scale.txt')
+        np.savetxt(camera_depth_scale_file, np.round(camera_depth_offset, 6), delimiter=' ', fmt='%.6f')
+        np.savetxt(os.path.join(data_save_dir, 'camera_pose.txt'), self.camera2world, delimiter=' ', fmt='%.6f')
+        return data_save_dir
+
 
 if __name__ == '__main__':
     cam_id = 246422072474
@@ -845,7 +904,10 @@ if __name__ == '__main__':
                                              calib_grid_step=calib_grid_step,
                                              checkerboard_offset_from_tool=checkerboard_offset_from_tool,
                                              workspace_limits=workspace_limits)
-    # calibrate_camera.run()
-    data_save_dir = r'D:\PycharmProjects\robotic-grasping\calibrate\data\20250821003411'
-    calibrate_camera.run_offline(data_save_dir=data_save_dir, max_img_num=80)
-    calibrate_camera.verify_calibration_by_realsense_camera(data_save_dir=data_save_dir, move_robot=True)
+    # # calibrate_camera.run()
+    # data_save_dir = r'D:\PycharmProjects\robotic-grasping\calibrate\data\20250821003411'
+    # calibrate_camera.run_offline(data_save_dir=data_save_dir, max_img_num=80)
+    # calibrate_camera.verify_calibration_by_realsense_camera(data_save_dir=data_save_dir, move_robot=True)
+
+    data_save_dir = calibrate_camera.quick_test()
+    calibrate_camera.verify_calibration_by_realsense_camera(data_save_dir=data_save_dir, move_robot=False)

@@ -454,7 +454,7 @@ def transform_points_form_work2base(points_in_wobj=None, M_base_wobj=None):
 if __name__ == '__main__':
 
     # --- 1. 配置参数 ---
-    save_dir = os.path.join(BASE_DIR, "9_point_calibrate")
+    save_dir = os.path.join(BASE_DIR, "nine_point_calibrate_data")
     os.makedirs(save_dir, exist_ok=True)
 
     chessboard_size = (8, 8)

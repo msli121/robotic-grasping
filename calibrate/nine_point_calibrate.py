@@ -7,7 +7,7 @@ import cv2
 import numpy as np
 import pyrealsense2 as rs
 
-from calibrate.utils import normalize_corner_order
+from calibrate.utils import normalize_corner_order, robot_pose_to_homogeneous_matrix
 
 
 # ==============================================================================
@@ -31,6 +31,7 @@ logger = setup_logger()
 np.set_printoptions(precision=8, suppress=True)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 
 # TCP 四点标定
 # 原则一：姿态差异最大化 (最重要)
@@ -361,7 +362,8 @@ class CameraDataCollector:
                 points_in_camera.append(point_camera)
                 valid_corners_uv.append((u, v))
 
-                logger.info(f"[反投影法] 角点 {i}: (u,v)=({u:.2f}, {v:.2f}) -> 深度={depth:.4f}m -> P_cam={point_camera}")
+                logger.info(
+                    f"[反投影法] 角点 {i}: (u,v)=({u:.2f}, {v:.2f}) -> 深度={depth:.4f}m -> P_cam={point_camera}")
 
             # 4. 保存结果
             points_cam_arr = np.array(points_in_camera)
@@ -496,6 +498,7 @@ if __name__ == '__main__':
         [0, 0, 1, 0.2],
         [0, 0, 0, 1]
     ])
+    # M_base_wobj = robot_pose_to_homogeneous_matrix(robot_pose=[x, y, z, rx, ry, rz], order='ZYX')
 
     # 自动计算 P_base
     # 步骤1: 定义Wobj坐标

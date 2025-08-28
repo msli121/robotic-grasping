@@ -457,6 +457,85 @@ def transform_points_form_work2base(points_in_wobj=None, M_base_wobj=None):
     return points_in_base
 
 
+import numpy as np
+from scipy.optimize import least_squares
+
+
+def calculate_tcp_by_sphere_fitting(list_flange_pose):
+    """
+    通过手动采集的多组法兰盘位姿，利用球面拟合计算TCP的 (x, y, z) 偏移。
+    假设工具坐标系的姿态与法兰盘坐标系姿态相同 (Rx=Ry=Rz=0)。
+
+    参数:
+    list_flange_pose: 法兰盘位姿列表，每个元素是一个[x,y,z,rx,ry,rz]
+
+    返回:
+    np.ndarray: TCP的 (x, y, z) 偏移向量 (单位: 米)。
+    """
+    num_points = len(list_flange_pose)
+    if num_points < 4:
+        raise ValueError("至少需要4个不同姿态的位姿数据")
+
+    list_M_base_flange = []
+    for robot_pose in list_flange_pose:
+        M_flange_board = robot_pose_to_homogeneous_matrix(robot_pose, order='ZYX')
+        list_M_base_flange.append(M_flange_board)
+
+    # 提取法兰盘的旋转矩阵 R 和平移向量 t
+    rotations = [M[:3, :3] for M in list_M_base_flange]
+    translations = [M[:3, 3] for M in list_M_base_flange]
+
+    # 定义误差函数 (残差函数)
+    def residuals(params):
+        # params 包含了我们要求解的未知数：
+        # 前3个是TCP在法兰盘坐标系下的偏移 [x, y, z]
+        # 后3个是固定参考点在基座坐标系下的位置 [Px, Py, Pz]
+        tcp_offset = params[0:3]
+        reference_point_base = params[3:6]
+
+        errors = []
+        for i in range(num_points):
+            R = rotations[i]
+            t = translations[i]
+
+            # 根据当前猜测的tcp_offset，计算出TCP在基座坐标系下的位置
+            tcp_pos_base = t + R @ tcp_offset
+
+            # 计算这个位置与猜测的固定参考点之间的距离误差
+            error_vector = tcp_pos_base - reference_point_base
+            errors.extend(error_vector)
+
+        return np.array(errors)
+
+    # 为求解器提供一个初始猜测值
+    # 可以假设工具长度大约是200mm，并且参考点在某个大概的位置
+    # 注意：这里的单位必须是米！
+    initial_tcp_offset = np.array([-0.015, 0.015, 0.043])
+    # 用法兰盘位置的平均值作为参考点初始猜测
+    initial_reference_point = np.mean(translations, axis=0)
+    initial_params = np.concatenate([initial_tcp_offset, initial_reference_point])
+
+    # 使用最小二乘法求解
+    result = least_squares(residuals, initial_params)
+
+    # 提取最终的TCP偏移结果
+    optimal_tcp_offset = result.x[0:3]
+    # 估计的参考点
+    estimated_reference_point = result.x[3:6]
+    logger.info(f"最优的TCP偏移 (x, y, z): {optimal_tcp_offset}")
+    logger.info(f"估计的参考点 (Px, Py, Pz): {estimated_reference_point}")
+    return optimal_tcp_offset
+
+
+def test_calculate_tcp_by_sphere_fitting():
+    list_flange_pose = [
+        [0.5, 0.5, 0.5, 0, 0, 0],
+        [0.5, 0.5, 0.5, 0, 0, 0],
+        [0.5, 0.5, 0.5, 0, 0, 0],
+        [0.5, 0.5, 0.5, 0, 0, 0],
+    ]
+    calculate_tcp_by_sphere_fitting(list_flange_pose)
+
 # ==============================================================================
 #                                  主函数
 # ==============================================================================

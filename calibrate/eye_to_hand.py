@@ -503,6 +503,7 @@ class EyeToHand:
 
         # 读取手眼标定结果（相机->基座外参）
         M_base_camera = np.loadtxt(M_base_camera_file, delimiter=" ")
+        logger.info(f"读取手眼标定结果（相机->基座外参）:\n {M_base_camera}")
         R_base_camera = M_base_camera[:3, :3]
         T_base_camera = M_base_camera[:3, 3]
 
@@ -546,11 +547,12 @@ class EyeToHand:
                 Xc = (x - cx) * depth_value / fx
                 Yc = (y - cy) * depth_value / fy
                 Zc = depth_value
-                Pc = np.array([[Xc], [Yc], [Zc]])
+                Pc_hom = np.array([Xc, Yc, Zc, 1]).reshape(4, 1)
+                # logger.info(f"相机坐标系下的点: {Pc_hom}")
 
                 # 3. 相机坐标系 → 基座坐标系
-                Pbase = R_base_camera @ Pc + T_base_camera
-                Pbase = Pbase.reshape(-1)
+                Pbase = (M_base_camera @ Pc_hom)[:3].flatten()
+                # logger.info(f"基座坐标系下的点: {Pb}")
 
                 # 4. 显示和记录结果
                 result_str = (f"像素点: ({x},{y}) → 深度: {depth_value:.3f}m → "
@@ -671,8 +673,8 @@ if __name__ == '__main__':
 
     # 执行手眼标定
     # M_flange_board = robot_pose_to_homogeneous_matrix([0, -100, 262, -90, 0.0, 90])
-    M_flange_board = None
-    eye_to_hand.do_calibrate(collect_data_dir=data_dir, show_board_img=False, M_flange_board=M_flange_board)
+    # M_flange_board = None
+    # eye_to_hand.do_calibrate(collect_data_dir=data_dir, show_board_img=False, M_flange_board=M_flange_board)
 
     # 验证标定结果
     # eye_to_hand.verify_residual_error(collect_data_dir=data_dir)

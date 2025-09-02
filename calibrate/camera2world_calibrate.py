@@ -95,7 +95,7 @@ class Camera2WorldCalibrate:
         # 标定板中心在相机图像上的二维像素坐标，用于结合相机内参计算相机坐标系下的值
         self.observed_pix = []
         # 相机外参，相机坐标系到机械臂基坐标系的变换矩阵
-        self.camera2world = np.eye(4)
+        self.M_base_camera = np.eye(4)
 
     @staticmethod
     def pixel_to_camera_coordinate(x, y, depth, K):
@@ -230,7 +230,7 @@ class Camera2WorldCalibrate:
         # 用修正后的相机点集和机械臂真实点集，求解旋转矩阵R和平移向量t
         R, t = self._get_rigid_transform(np.asarray(new_observed_pts), np.asarray(self.measured_pts))
         t.shape = (3, 1)
-        self.camera2world = np.concatenate((np.concatenate((R, t), axis=1), np.array([[0, 0, 0, 1]])), axis=0)
+        self.M_base_camera = np.concatenate((np.concatenate((R, t), axis=1), np.array([[0, 0, 0, 1]])), axis=0)
 
         # 将修正后的相机点通过R和t变换到机械臂坐标系，得到变换后的点
         registered_pts = np.dot(R, np.transpose(new_observed_pts)) + np.tile(t, (1, new_observed_pts.shape[0]))
@@ -284,7 +284,7 @@ class Camera2WorldCalibrate:
         rmse = self._get_rigid_transform_error(z_scale=camera_depth_offset)
         logger.info(f'标定结果均方根误差(RMSE): {rmse}')
         camera_pose_file = os.path.join(data_save_dir, f'camera_pose.txt')
-        np.savetxt(camera_pose_file, np.round(self.camera2world, 6), delimiter=' ', fmt='%.6f')
+        np.savetxt(camera_pose_file, np.round(self.M_base_camera, 6), delimiter=' ', fmt='%.6f')
         logger.info(f'相机坐标系到机械臂坐标系变换矩阵 保存路径: {os.path.abspath(camera_pose_file)}')
         logger.info('标定完成！！！')
 
@@ -295,8 +295,8 @@ class Camera2WorldCalibrate:
         robot_base_xyz_origin = Camera2WorldCalibrate.camera_to_robot_coordinate(camera_xyz[0],
                                                                                  camera_xyz[1],
                                                                                  camera_xyz[2],
-                                                                                 self.camera2world)
-        logger.info(f'相机坐标系到机械臂坐标系变换矩阵: {self.camera2world}')
+                                                                                 self.M_base_camera)
+        logger.info(f'相机坐标系到机械臂坐标系变换矩阵: {self.M_base_camera}')
         logger.info(f'相机坐标系下的点: {camera_xyz}')
         logger.info(f'机械臂基坐标系（计算前）: {robot_xyz}')
         logger.info(f'机械臂坐标系下的点(计算后): {robot_base_xyz_origin}')
@@ -588,9 +588,9 @@ class Camera2WorldCalibrate:
             logger.error(f"数据保存文件夹未指定")
             return
         # ========== 读取标定结果 ==========
-        camera2world = np.loadtxt(os.path.join(data_save_dir, 'camera_pose.txt'), delimiter=' ')
-        self.camera2world = camera2world
-        cam_depth_scale = np.loadtxt(os.path.join(data_save_dir, 'camera_depth_scale.txt'), delimiter=' ')
+        M_base_camera = np.loadtxt(os.path.join(data_save_dir, 'M_base_camera.txt'), delimiter=' ')
+        self.M_base_camera = M_base_camera
+        # cam_depth_scale = np.loadtxt(os.path.join(data_save_dir, 'camera_depth_scale.txt'), delimiter=' ')
 
         save_verify_results = True  # 是否保存测量结果
         save_verify_results_file = os.path.join(data_save_dir, "calibration_verification_results.txt")
@@ -622,7 +622,7 @@ class Camera2WorldCalibrate:
                     return
 
                 # 1.从对齐的深度图获取深度值（注意坐标顺序）
-                depth_value = depth[y, x] * cam_depth_scale
+                depth_value = depth[y, x]
                 depth_value = depth_value[0]
                 if depth_value < 0.1 or depth_value > 0.7:  # 合理深度范围判断
                     print(f"深度值({depth_value:.3f}m)超出有效范围(0.1-0.7m)")
@@ -631,27 +631,13 @@ class Camera2WorldCalibrate:
                 camera_xyz = Camera2WorldCalibrate.pixel_to_camera_coordinate(x, y, depth_value, self.camera.K)
                 # 3. 将相机坐标转换为机械臂基坐标
                 robot_base_xyz = Camera2WorldCalibrate.camera_to_robot_coordinate(camera_xyz[0], camera_xyz[1],
-                                                                                  camera_xyz[2], self.camera2world)
+                                                                                  camera_xyz[2], self.M_base_camera)
 
                 # 4. 显示和记录结果
                 result_str = (f"像素点: ({x},{y}) → 深度: {depth_value:.3f}m → "
-                              f"相机坐标(深度缩放): X={camera_xyz[0]:.4f}m, Y={camera_xyz[1]:.4f}m, Z={camera_xyz[2]:.4f}m → "
-                              f"基座坐标(深度缩放): X={robot_base_xyz[0]:.4f}m, Y={robot_base_xyz[1]:.4f}m, Z={robot_base_xyz[2]:.4f}m")
+                              f"相机坐标: X={camera_xyz[0]:.4f}m, Y={camera_xyz[1]:.4f}m, Z={camera_xyz[2]:.4f}m → "
+                              f"基座坐标: X={robot_base_xyz[0]:.4f}m, Y={robot_base_xyz[1]:.4f}m, Z={robot_base_xyz[2]:.4f}m")
                 print(result_str)
-
-                # 处理未缩放深度值
-                depth_value_origin = depth[y, x]
-                depth_value_origin = depth_value_origin[0]
-                camera_xyz_origin = Camera2WorldCalibrate.pixel_to_camera_coordinate(x, y, depth_value_origin,
-                                                                                     self.camera.K)
-                robot_base_xyz_origin = Camera2WorldCalibrate.camera_to_robot_coordinate(camera_xyz_origin[0],
-                                                                                         camera_xyz_origin[1],
-                                                                                         camera_xyz_origin[2],
-                                                                                         self.camera2world)
-                result_str_origin = (f"像素点: ({x},{y}) → 深度: {depth_value_origin:.3f}m → "
-                                     f"相机坐标(未缩放): X={camera_xyz_origin[0]:.4f}m, Y={camera_xyz_origin[1]:.4f}m, Z={camera_xyz_origin[2]:.4f}m → "
-                                     f"基座坐标(未缩放): X={robot_base_xyz_origin[0]:.4f}m, Y={robot_base_xyz_origin[1]:.4f}m, Z={robot_base_xyz_origin[2]:.4f}m")
-                print(result_str_origin)
 
                 # 6. 移动机械臂到点击点
                 if move_robot:
@@ -675,10 +661,7 @@ class Camera2WorldCalibrate:
                     "depth": depth_value,
                     "camera_coords": (camera_xyz[0], camera_xyz[1], camera_xyz[2]),
                     "base_coords": (robot_base_xyz[0], robot_base_xyz[1], robot_base_xyz[2]),
-                    "depth_origin": depth_value_origin,
-                    "camera_coords_origin": (camera_xyz_origin[0], camera_xyz_origin[1], camera_xyz_origin[2]),
-                    "base_coords_origin": (
-                        robot_base_xyz_origin[0], robot_base_xyz_origin[1], robot_base_xyz_origin[2]),
+                    "depth_origin": depth_value,
                 })
 
                 # 5. 在图像上标记点击点和信息
@@ -748,7 +731,6 @@ class Camera2WorldCalibrate:
         except Exception as e:
             print(f"程序运行出错: {str(e)}")
         finally:
-            self.robot.close()
             # 资源清理
             cv2.destroyAllWindows()
             print("资源已释放")
@@ -765,6 +747,10 @@ class Camera2WorldCalibrate:
                         f.write(f"  相机坐标(未缩放): {res['camera_coords_origin']}\n")
                         f.write(f"  基座坐标(未缩放): {res['base_coords_origin']}\n\n")
                 print(f"自动保存 {len(measurement_results)} 个测量结果到 {save_verify_results_file}")
+            if move_robot:
+                self.robot.send_position(default_grasp_pose)
+                time.sleep(2)
+                self.robot.close()
 
     def quick_test(self):
         self.camera.connect()
@@ -784,17 +770,6 @@ class Camera2WorldCalibrate:
             0, 3, 6,
             24, 27, 30,
             48, 51, 54,
-        ]
-        pix_index = [
-            [0, 0],
-            [3, 0],
-            [6, 0],
-            [3, 0],
-            [3, 3],
-            [3, 6],
-            [6, 0],
-            [6, 3],
-            [6, 6],
         ]
 
         K, dist = self.camera.get_K_and_dist()
@@ -885,12 +860,12 @@ class Camera2WorldCalibrate:
         logger.info(f'最优深度缩放系数为: {camera_depth_offset}')
         rmse = self._get_rigid_transform_error(z_scale=camera_depth_offset)
         logger.info(f'标定结果均方根误差(RMSE): {rmse}')
-        logger.info(f'camera2base: {np.round(self.camera2world, 6)}')
+        logger.info(f'camera2base: {np.round(self.M_base_camera, 6)}')
         data_save_dir = os.path.join(BASE_DIR, 'test')
         os.makedirs(data_save_dir, exist_ok=True)
         camera_depth_scale_file = os.path.join(data_save_dir, f'camera_depth_scale.txt')
         np.savetxt(camera_depth_scale_file, np.round(camera_depth_offset, 6), delimiter=' ', fmt='%.6f')
-        np.savetxt(os.path.join(data_save_dir, 'camera_pose.txt'), self.camera2world, delimiter=' ', fmt='%.6f')
+        np.savetxt(os.path.join(data_save_dir, 'camera_pose.txt'), self.M_base_camera, delimiter=' ', fmt='%.6f')
         return data_save_dir
 
 
@@ -909,5 +884,6 @@ if __name__ == '__main__':
     # calibrate_camera.run_offline(data_save_dir=data_save_dir, max_img_num=80)
     # calibrate_camera.verify_calibration_by_realsense_camera(data_save_dir=data_save_dir, move_robot=True)
 
-    data_save_dir = calibrate_camera.quick_test()
+    # data_save_dir = calibrate_camera.quick_test()
+    data_save_dir = r'D:\PycharmProjects\robotic-grasping\calibrate\data\hand_to_eye_20250824_164130'
     calibrate_camera.verify_calibration_by_realsense_camera(data_save_dir=data_save_dir, move_robot=False)

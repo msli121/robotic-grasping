@@ -512,43 +512,43 @@ def test_process_position_files():
 
 # 使用示例
 if __name__ == "__main__":
-    output_path = test_process_position_files()
-    robot_poses = read_robot_poses(output_path)
-    print(robot_poses)
+    # output_path = test_process_position_files()
+    # robot_poses = read_robot_poses(output_path)
+    # print(robot_poses)
     #
     # # # 处理captures目录下的文件（可根据实际情况修改）
     # # source_dir = "./captures"
     # # # 处理拍摄的照片文件
     # # process_checkerboard_and_pose_data(source_dir)
     #
-    # # 标定板坐标系到法兰盘坐标系的变换矩阵
-    # # robot_pose = [-19.3485, -79.2081, 199.392, -90, 0.0, 90]
-    # robot_pose = [-1.86159, -80.0191, 219.572, -90, 0, 90]
-    # # pose = [-0.01935, -0.0, 0.1994, - np.pi / 2, 0, np.pi / 2]
-    # M_flange_board = robot_pose_to_homogeneous_matrix(robot_pose, order='ZYX')
-    # print("标定板坐标系到法兰盘坐标系的变换矩阵")
-    # print(M_flange_board)
+    # 标定板坐标系到法兰盘坐标系的变换矩阵
+    # robot_pose = [-19.3485, -79.2081, 199.392, -90, 0.0, 90]
+    robot_pose = [0, 0, 45, 0, 0, 0]
+    # pose = [-0.01935, -0.0, 0.1994, - np.pi / 2, 0, np.pi / 2]
+    M_flange_board = robot_pose_to_homogeneous_matrix(robot_pose, order='ZYX')
+    print("标定板坐标系到法兰盘坐标系的变换矩阵")
+    print(M_flange_board)
     #
     # # test_board_pose = [0.0, 0.018 * 11, 0.0, 1]
-    # test_board_pose = [0.0, 0.0, 0.0, 1]
-    # test_board_pose = np.asarray(test_board_pose).reshape((4, 1))
-    # robot_pose = M_flange_board @ test_board_pose
-    # print(f"标定板 => 法兰盘 {test_board_pose.flatten()[:3]} => {robot_pose.flatten()[:3]}")
-    #
-    # # 法兰盘坐标系到世界坐标系的变换矩阵
-    # flange_pose = [275.82, 14.21, 220.41, 150.11, -78.08, 3.99]
-    # M_base_flange = robot_pose_to_homogeneous_matrix(flange_pose, order='ZYX')
-    # print("法兰盘坐标系到世界坐标系的变换矩阵")
-    # print(M_base_flange)
-    #
-    # M_base_board = M_base_flange @ M_flange_board
-    # print("标定板坐标系到机械臂基坐标系的变换矩阵")
-    # print(M_base_board)
-    #
-    # # 标定板坐标系到机械臂基坐标系的变换矩阵
-    # robot_pos = M_base_flange @ M_flange_board @ test_board_pose
-    # # [0 0 0] => [0.40530398 0.12049056 0.17405847]
-    # print(f"标定板 => 机械臂 {test_board_pose.flatten()[:3]} => {robot_pos.flatten()[:3]}")
+    test_board_pose = [0.0, 0.0, 0.0, 1]
+    test_board_pose = np.asarray(test_board_pose).reshape((4, 1))
+    robot_pose = M_flange_board @ test_board_pose
+    print(f"标定板 => 法兰盘 {test_board_pose.flatten()[:3]} => {robot_pose.flatten()[:3]}")
+
+    # 法兰盘坐标系到世界坐标系的变换矩阵
+    flange_pose = [340, 9.15, 281.86, -178.33, 1.12, 168.26]
+    M_base_flange = robot_pose_to_homogeneous_matrix(flange_pose, order='ZYX')
+    print("法兰盘坐标系到世界坐标系的变换矩阵")
+    print(M_base_flange)
+
+    M_base_board = M_base_flange @ M_flange_board
+    print("标定板坐标系到机械臂基坐标系的变换矩阵")
+    print(M_base_board)
+
+    # 标定板坐标系到机械臂基坐标系的变换矩阵
+    robot_pos = M_base_flange @ M_flange_board @ test_board_pose
+    # [0 0 0] => [0.40530398 0.12049056 0.17405847]
+    print(f"标定板 => 机械臂 {test_board_pose.flatten()[:3]} => {robot_pos.flatten()[:3]}")
     #
     # # captures_dir = "./captures"
     # # # 确保目录存在

@@ -6,6 +6,7 @@ import colorlog
 import cv2
 import numpy as np
 import pyrealsense2 as rs
+from scipy.optimize import least_squares
 
 from calibrate.utils import normalize_corner_order, robot_pose_to_homogeneous_matrix
 
@@ -158,7 +159,7 @@ def rigid_transform(src_pts, dst_pts, calc_scale=False):
 
     M = np.eye(4)
     M[:3, :3] = R
-    M[:3, 3] = t
+    M[:3, 3] = t.flatten()
     return M
 
 
@@ -197,7 +198,7 @@ class CameraDataCollector:
         try:
             self.pipeline = rs.pipeline()
             config = rs.config()
-            config.enable_device(self.config['camera_id'])
+            config.enable_device(str(self.config['camera_id']))
             config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
             config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
             profile = self.pipeline.start(config)
@@ -457,10 +458,6 @@ def transform_points_form_work2base(points_in_wobj=None, M_base_wobj=None):
     return points_in_base
 
 
-import numpy as np
-from scipy.optimize import least_squares
-
-
 def calculate_tcp_by_sphere_fitting(list_flange_pose):
     """
     通过手动采集的多组法兰盘位姿，利用球面拟合计算TCP的 (x, y, z) 偏移。
@@ -491,6 +488,8 @@ def calculate_tcp_by_sphere_fitting(list_flange_pose):
         # 前3个是TCP在法兰盘坐标系下的偏移 [x, y, z]
         # 后3个是固定参考点在基座坐标系下的位置 [Px, Py, Pz]
         tcp_offset = params[0:3]
+        tcp_offset[0] = 0
+        tcp_offset[1] = 0
         reference_point_base = params[3:6]
 
         errors = []
@@ -510,7 +509,7 @@ def calculate_tcp_by_sphere_fitting(list_flange_pose):
     # 为求解器提供一个初始猜测值
     # 可以假设工具长度大约是200mm，并且参考点在某个大概的位置
     # 注意：这里的单位必须是米！
-    initial_tcp_offset = np.array([-0.015, 0.015, 0.043])
+    initial_tcp_offset = np.array([0, 0, 0.045])
     # 用法兰盘位置的平均值作为参考点初始猜测
     initial_reference_point = np.mean(translations, axis=0)
     initial_params = np.concatenate([initial_tcp_offset, initial_reference_point])
@@ -524,23 +523,44 @@ def calculate_tcp_by_sphere_fitting(list_flange_pose):
     estimated_reference_point = result.x[3:6]
     logger.info(f"最优的TCP偏移 (x, y, z): {optimal_tcp_offset}")
     logger.info(f"估计的参考点 (Px, Py, Pz): {estimated_reference_point}")
-    return optimal_tcp_offset
+
+    # --- 【新增】误差分析环节 ---
+    logger.info("\n" + "=" * 20 + " 拟合误差分析 " + "=" * 20)
+
+    # 用计算出的最优解，来重新计算每个点的TCP位置
+    calculated_tcp_positions = [t + R @ optimal_tcp_offset for R, t in zip(rotations, translations)]
+    calculated_tcp_positions = np.array(calculated_tcp_positions)
+
+    # 计算每个点到“最佳球心”（估计的参考点）的距离误差
+    errors_m = np.linalg.norm(calculated_tcp_positions - estimated_reference_point, axis=1)
+    errors_mm = errors_m * 1000.0  # 转换为毫米
+
+    # 打印详细的每个点的残差
+    logger.info("--- 各姿态点的拟合残差 (单位: 毫米) ---")
+    for i, error in enumerate(errors_mm):
+        logger.info(f"  姿态点 {i + 1}: 拟合误差 = {error:.4f} mm")
+
+    # 计算并打包统计报告
+    max_error = np.max(errors_mm)
+    mean_error = np.mean(errors_mm)
+    std_dev = np.std(errors_mm)
+
+    error_report = {
+        "max_residual_mm": max_error,
+        "mean_residual_mm": mean_error,
+        "std_dev_mm": std_dev
+    }
+
+    # 打印最终的统计报告
+    logger.info("\n--- 最终拟合精度统计 (单位: 毫米) ---")
+    logger.info(f"  最大残差 (Max Residual Error): {max_error:.4f} mm")
+    logger.info(f"  平均残差 (Mean Residual Error): {mean_error:.4f} mm")
+    logger.info(f"  残差标准差 (Standard Deviation): {std_dev:.4f} mm")
+
+    return optimal_tcp_offset, error_report
 
 
-def test_calculate_tcp_by_sphere_fitting():
-    list_flange_pose = [
-        [0.5, 0.5, 0.5, 0, 0, 0],
-        [0.5, 0.5, 0.5, 0, 0, 0],
-        [0.5, 0.5, 0.5, 0, 0, 0],
-        [0.5, 0.5, 0.5, 0, 0, 0],
-    ]
-    calculate_tcp_by_sphere_fitting(list_flange_pose)
-
-# ==============================================================================
-#                                  主函数
-# ==============================================================================
-if __name__ == '__main__':
-
+def do_calibrate():
     # --- 1. 配置参数 ---
     save_dir = os.path.join(BASE_DIR, "nine_point_calibrate_data")
     os.makedirs(save_dir, exist_ok=True)
@@ -563,7 +583,6 @@ if __name__ == '__main__':
 
     # --- 2. 数据采集阶段 ---
     # 运行其中一种方法，或者两种都运行以生成不同的数据文件
-
     collector = CameraDataCollector(config)
 
     # === 运行方法一：SolvePnP ===
@@ -577,13 +596,9 @@ if __name__ == '__main__':
 
     # --- 3. 计算阶段 ---
     # 输入已知的 M_base_wobj
-    M_base_wobj = np.array([
-        [1, 0, 0, 0.5],
-        [0, 1, 0, 0.1],
-        [0, 0, 1, 0.2],
-        [0, 0, 0, 1]
-    ])
-    # M_base_wobj = robot_pose_to_homogeneous_matrix(robot_pose=[x, y, z, rx, ry, rz], order='ZYX')
+    # robot_pose = [349.673, 47.6705, 151.804, -167.202, 1.04631, -88.6680]
+    robot_pose = [385.930, 35.9785, 167.968, -158.524, 1.68234, -90.0000]
+    M_base_wobj = robot_pose_to_homogeneous_matrix(robot_pose=robot_pose, order='ZYX')
 
     # 自动计算 P_base
     # 步骤1: 定义Wobj坐标
@@ -605,6 +620,8 @@ if __name__ == '__main__':
             # 计算刚性变换
             M_base_camera = rigid_transform(points_in_camera, points_in_base)
             logger.info(f"\n[SolvePnP法] 计算出的 M_base_camera:\n{M_base_camera}")
+            np.savetxt(os.path.join(save_dir, 'M_base_camera_by_solvepnp.txt'), M_base_camera, delimiter=' ',
+                       fmt='%.8f')
             verify_transformation(M_base_camera, points_in_camera, points_in_base)
         else:
             logger.error(f"文件 {cam_file_solvepnp} 存在，但数据点数量与目标点数量不一致，无法进行计算。")
@@ -623,9 +640,60 @@ if __name__ == '__main__':
             points_in_camera = all_points_in_camera[linear_indices]
             # 计算刚性变换
             M_base_camera = rigid_transform(points_in_camera, points_in_base)
+            np.savetxt(os.path.join(save_dir, 'M_base_camera_by_projection.txt'), M_base_camera, delimiter=' ',
+                       fmt='%.8f')
             logger.info(f"\n[单点法] 计算出的 M_base_camera:\n{M_base_camera}")
             verify_transformation(M_base_camera, points_in_camera, points_in_base)
         else:
             logger.error(f"文件 {cam_file_single} 存在，但数据点数量与目标点数量不一致，无法进行计算。")
     else:
         logger.error(f"文件 {cam_file_single} 不存在，无法进行单点反投影数据计算。")
+    return save_dir
+
+
+def test_calculate_tcp_by_sphere_fitting():
+    list_flange_pose = [
+        # [352.7166, 3.834210, 275.4843, 177.1057, -7.580472, -151.7946],
+        # [381.6855, -0.4848859, 269.3588, -164.2730, 36.22287, -44.85877],
+        # [341.0879, 50.23175, 244.1174, 112.4219, -10.66462, 27.04406],
+        # [360.0086, 28.10650, 275.0159, -179.6946, 0.9222620, -4.622844],
+        # [313.5419, 4.693391, 252.9166, -108.9253, -62.30903, -28.31354],
+        # [335.3222, -10.97202, 249.9016, -72.89448, -64.41283, -31.75434],
+        # [306.2386, 4.831776, 240.7068, -87.02254, 11.26474, -84.24688],
+        # [309.6485, 7.596585, 230.6693, -67.90858, 15.67651, -86.06684],
+        # [310.6455, 19.23397, 257.2483, 156.6221, 7.133883, 111.4414],
+        # [312.3597, 20.28491, 222.0596, 62.31935, -42.56069, 132.3357]
+
+        # [300.6935, 5.897338, 280.2787, -173.5956, 2.963190, -113.6239],
+        # [305.6845, 30.23043, 273.2603, -152.3229, -38.03855, -120.5387],
+        # [319.1454, -26.62746, 266.1335, 151.3848, 60.70327, -118.5182],
+        # [357.2262, 6.396538, 283.5108, 137.8029, -9.319727, -99.86958],
+        # [277.5786, -6.563340, 228.6363, 64.37449, -33.45845, 130.8999],
+        # [292.6084, 28.54366, 226.4671, 17.30167, 59.50727, -23.84530],
+        # [305.8756, 3.380453, 282.0353, 176.9817, -4.492258, 102.2633],
+        # [327.4564, 18.15222, 284.6125, -164.1305, 20.73775, 87.55800]
+
+        [289.9453, -10.17129, 195.7473, 179.1251, -0.8051122, -100.7155],
+        [249.2397, -9.187646, 166.5136, 164.7294, -71.82033, 15.27701],
+        [258.0807, -14.32081, 150.7769, 80.46963, 30.34707, 95.07211],
+        [289.0140, -36.57229, 142.0376, 64.18985, 3.800748, 143.4792],
+        [277.0410, -29.79131, 182.3373, -129.9759, 15.44075, -40.07043],
+        [312.9283, -41.63756, 179.0982, -119.5534, 28.63601, -3.005495],
+        [328.0746, -48.26571, 160.1607, -87.94541, 32.68209, 17.23763],
+        [264.3297, -25.56550, 156.0101, -85.87966, 40.58895, -53.78360],
+        [286.5349, -16.73933, 194.4251, -170.4328, -8.955682, 27.43024],
+        [297.8774, 18.40981, 177.9461, 117.5849, 24.27140, 15.89549],
+        [333.6035, 19.61710, 173.5613, -110.0190, 36.61344, 137.6264],
+        [352.9947, -8.362139, 185.0550, -123.8039, 9.795426, 89.75771]
+    ]
+    calculate_tcp_by_sphere_fitting(list_flange_pose)
+
+
+# ==============================================================================
+#                                  主函数
+# ==============================================================================
+if __name__ == '__main__':
+    # test_calculate_tcp_by_sphere_fitting()
+
+    # 标定
+    do_calibrate()

@@ -135,6 +135,27 @@ def robot_pose_to_homogeneous_matrix(robot_pose, order='ZYX'):
     return pose_to_homogeneous_matrix(robot_pose, order=order)
 
 
+def compensate_robot_pose(raw_pose_mm_deg, scale_factors=np.array([1, 1, 1])):
+    """
+    对从机器人控制器读取的原始位姿，应用尺度因子补偿。
+
+    参数:
+    raw_pose_mm_deg (list or np.array): [x,y,z,rx,ry,rz] 原始读数 (mm, deg)。
+    scale_factors (np.array): [Scale_X, Scale_Y, Scale_Z] 我们标定出的尺度因子。
+
+    返回:
+    np.array: 经过尺度补偿后的位姿 [x,y,z,rx,ry,rz] (mm, deg)。
+    """
+    compensated_pose = np.asarray(raw_pose_mm_deg, dtype=float)
+    compensated_pose = compensated_pose.flatten()
+
+    # 只对平移部分 (x, y, z) 应用尺度补偿
+    # 真实坐标 = 机器人报告坐标 * 尺度因子
+    compensated_pose[:3] *= scale_factors
+
+    return compensated_pose
+
+
 def normalize_corner_order(corners, checkerboard_size):
     """
     一个稳健的函数，用于统一OpenCV棋盘格角点的检测顺序。
@@ -509,6 +530,7 @@ def test_process_position_files():
 
     print(f"成功处理{len(pos_files)}个文件，结果已保存至{output_path}")
     return output_path
+
 
 # 使用示例
 if __name__ == "__main__":

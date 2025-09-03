@@ -362,13 +362,15 @@ class EyeToHand:
 
         return data_save_dir
 
-    def do_calibrate(self, collect_data_dir=None, show_board_img=True, M_flange_board=None):
+    def do_calibrate(self, collect_data_dir=None, show_board_img=True):
         """
         执行眼在手外标定，获取相机坐标系相对于机械臂基座标的旋转矩阵和平移向量
         :param collect_data_dir: 采集数据的文件夹路径
         :param show_board_img: 是否显示标定板图像
         :return: R_base_camera : 相机坐标系相对于机械臂基座标的旋转矩阵
         """
+        logger.info(
+            f"开始执行眼在手外标定，采集数据文件夹路径: {collect_data_dir} show_board_img:{show_board_img}")
         if not collect_data_dir or not os.path.exists(collect_data_dir):
             raise ValueError("采集数据文件夹路径不存在")
         if not os.path.exists(os.path.join(collect_data_dir, 'camera_matrix.txt')):
@@ -429,10 +431,8 @@ class EyeToHand:
                     t_camera_boards.append(tvec)
                     # 添加位姿信息
                     flange_pose = np.loadtxt(flange_pose_file, delimiter=' ')
-                    # 转换为齐次坐标，法兰盘子坐标系到基坐标系的变换矩阵
+                    # 转换为齐次坐标，法兰盘坐标系到基坐标系的变换矩阵
                     M_base_flange = robot_pose_to_homogeneous_matrix(flange_pose, order='ZYX')
-                    if M_flange_board is not None:
-                        M_base_flange = M_base_flange @ M_flange_board
                     M_base_flanges.append(M_base_flange)
                 else:
                     logger.info(f"图片 {rgb_file} 角点检测失败")
@@ -465,7 +465,7 @@ class EyeToHand:
 
         for method in methods_dict:
             logger.info(f"\n\n开始进行手眼标定 方法：{methods_dict[method]}")
-            R_cam2base, t_cam2base = cv2.calibrateHandEye(
+            R_base_camera, t_base_camera = cv2.calibrateHandEye(
                 R_flange_bases,
                 t_flange_bases,
                 R_camera_boards,
@@ -473,13 +473,13 @@ class EyeToHand:
                 method=method,
             )
             logger.info(f"[{methods_dict[method]}] 相机坐标系到机械臂基坐标系的旋转矩阵:")
-            logger.info(R_cam2base)
+            logger.info(R_base_camera)
             logger.info(f"[{methods_dict[method]}] 相机坐标系到机械臂基坐标系的平移向量:")
-            logger.info(t_cam2base)
+            logger.info(t_base_camera)
             if method == cv2.CALIB_HAND_EYE_PARK:
                 M_base_camera = np.eye(4)
-                M_base_camera[:3, :3] = R_cam2base
-                M_base_camera[:3, 3] = t_cam2base.reshape(3)
+                M_base_camera[:3, :3] = R_base_camera
+                M_base_camera[:3, 3] = t_base_camera.reshape(3)
                 np.savetxt(os.path.join(collect_data_dir, 'M_base_camera.txt'), M_base_camera, delimiter=' ',
                            fmt='%.8f')
                 logger.info(
@@ -662,20 +662,21 @@ if __name__ == '__main__':
         chessboard_grid_size=chessboard_grid_size,
         workspace_limits=workspace_limits,
         workspace_step_size=workspace_step_size)
+
     data_dir = r'D:\PycharmProjects\robotic-grasping\calibrate\data\hand_to_eye_20250824_164130'
+
     # # 自动移动机械臂收集数据
     # data_dir = eye_to_hand.auto_collect_data()
 
     # 指定姿态采集机械臂数据
     # robot_pose_file = './robot_origin_pose.txt'
     # data_dir = eye_to_hand.collect_data_by_poses(robot_pose_file)
-    logger.info(data_dir)
 
     # 执行手眼标定
-    # M_flange_board = robot_pose_to_homogeneous_matrix([0, -100, 262, -90, 0.0, 90])
-    # M_flange_board = None
     # eye_to_hand.do_calibrate(collect_data_dir=data_dir, show_board_img=False, M_flange_board=M_flange_board)
 
-    # 验证标定结果
+    # 验证标定结果误差
     # eye_to_hand.verify_residual_error(collect_data_dir=data_dir)
-    eye_to_hand.verify_by_camera(collect_data_dir=data_dir)
+
+    # 相机实际验证
+    # eye_to_hand.verify_by_camera(collect_data_dir=data_dir)

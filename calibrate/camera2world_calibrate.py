@@ -632,11 +632,13 @@ class Camera2WorldCalibrate:
                 # 3. 将相机坐标转换为机械臂基坐标
                 robot_base_xyz = Camera2WorldCalibrate.camera_to_robot_coordinate(camera_xyz[0], camera_xyz[1],
                                                                                   camera_xyz[2], self.M_base_camera)
-
+                xyz_scale = np.array([1.11496, 0.8479, 0.9253])
+                scale_robot_base_xyz = robot_base_xyz / xyz_scale
                 # 4. 显示和记录结果
                 result_str = (f"像素点: ({x},{y}) → 深度: {depth_value:.3f}m → "
                               f"相机坐标: X={camera_xyz[0]:.4f}m, Y={camera_xyz[1]:.4f}m, Z={camera_xyz[2]:.4f}m → "
-                              f"基座坐标: X={robot_base_xyz[0]:.4f}m, Y={robot_base_xyz[1]:.4f}m, Z={robot_base_xyz[2]:.4f}m")
+                              f"基座坐标: X={robot_base_xyz[0]:.4f}m, Y={robot_base_xyz[1]:.4f}m, Z={robot_base_xyz[2]:.4f}m -> "
+                              f"缩放坐标: X={scale_robot_base_xyz[0]:.4f}m, Y={scale_robot_base_xyz[1]:.4f}m, Z={scale_robot_base_xyz[2]:.4f}m")
                 print(result_str)
 
                 # 6. 移动机械臂到点击点

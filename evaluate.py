@@ -118,10 +118,8 @@ def run():
     )
     logging.info('Load test data done!')
 
-    start_time = time.time()
     last_print_time = time.time()
     total = len(test_data)
-    correct = 0
 
     for network in args.network:
         logging.info('\nEvaluating model {}'.format(network))
@@ -225,16 +223,13 @@ def init_log(args):
     logging.getLogger('').addHandler(console)
 
 if __name__ == '__main__':
-    # baseline corne
+    # baseline cornell
     # python evaluate.py --network trained-models/cornell-randsplit-rgbd-grconvnet3-drop1-ch32/epoch_19_iou_0.98 --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --iou-eval
 
     # python evaluate.py --network trained-models/jacquard-rgbd-grconvnet3-drop0-ch32/epoch_48_iou_0.93 --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --iou-eval
     # python evaluate.py --network logs/250814_1440_training_cornell_grconvnet_goa/best_iou_epoch_21_iou_0.9153 --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --iou-eval
     # python evaluate.py --network logs/250814_1440_training_cornell_grconvnet_goa/best_iou_epoch_21_iou_0.9153 --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --iou-eval
-
     # python evaluate.py --network logs/250811_0138_training_cornell_grconvnet3/epoch_33_iou_0.9209 --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --iou-eval
-
     # python train_network.py --dataset jacquard --dataset-path <Path To Dataset> --description training_jacquard --use-dropout 0 --input-size 300
-
     # python evaluate.py --network logs/250812_0009_training_Jacquard_grconvnet3/best_iou_epoch_35_iou_0.8903 --dataset jacquard --dataset-path D:\\datasets\\Jacquard --iou-eval --input-size 224
     run()

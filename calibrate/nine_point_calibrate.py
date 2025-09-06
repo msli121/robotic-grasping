@@ -9,6 +9,8 @@ import pyrealsense2 as rs
 from scipy.optimize import least_squares
 
 from calibrate.utils import normalize_corner_order, robot_pose_to_homogeneous_matrix
+from hardware.camera import RealSenseCamera
+from robot.densor_robot import DensorRobot
 
 
 # ==============================================================================
@@ -236,8 +238,8 @@ class CameraDataCollector:
             return
 
         logger.info("请确保棋盘格在相机视野内清晰可见，且机器人已移开。")
-        logger.info("5秒后将自动捕获图像...")
-        time.sleep(5)
+        logger.info("3秒后将自动捕获图像...")
+        time.sleep(3)
 
         try:
             frames = self.pipeline.wait_for_frames()
@@ -305,8 +307,8 @@ class CameraDataCollector:
             return
 
         logger.info("请确保棋盘格在相机视野内清晰可见，且机器人已移开。")
-        logger.info("5秒后将自动捕获并处理图像...")
-        time.sleep(5)
+        logger.info("3秒后将自动捕获并处理图像...")
+        time.sleep(3)
 
         try:
             # 1. 捕获对齐的帧
@@ -560,7 +562,45 @@ def calculate_tcp_by_sphere_fitting(list_flange_pose):
     return optimal_tcp_offset, error_report
 
 
-def do_calibrate():
+def pixel_to_camera_coordinate(x, y, depth, K):
+    """
+    将像素坐标转换为相机坐标
+    :param x: 像素坐标x
+    :param y: 像素坐标y
+    :param depth: 深度值
+    :param K: 相机内参矩阵
+    :return: 相机坐标
+    """
+    fx = K[0, 0]
+    fy = K[1, 1]
+    cx = K[0, 2]
+    cy = K[1, 2]
+
+    # 计算相机坐标
+    Zc = depth
+    Xc = (x - cx) * Zc / fx
+    Yc = (y - cy) * Zc / fy
+    return np.array([Xc, Yc, Zc])
+
+
+def camera_to_robot_coordinate(x_c, y_c, z_c, camera2world):
+    """
+        将相机坐标转换为机械臂基坐标
+        :param x_c: 相机坐标x
+        :param y_c: 相机坐标y
+        :param z_c: 相机坐标z
+        :param camera2world: 相机到机械臂基坐标系的变换矩阵 4*4
+        :return: 机械臂基坐标
+    """
+    # 转换为齐次坐标
+    camera_coord_homog = np.append([x_c, y_c, z_c], [1]).reshape(4, 1)
+    # 转换到机器人基坐标系
+    robot_coord = np.dot(camera2world, camera_coord_homog)
+    robot_base_xyz = robot_coord[:3].flatten()  # 移除齐次坐标
+    return robot_base_xyz
+
+
+def do_calibrate_one_step():
     # --- 1. 配置参数 ---
     save_dir = os.path.join(BASE_DIR, "nine_point_calibrate_data")
     os.makedirs(save_dir, exist_ok=True)
@@ -576,9 +616,9 @@ def do_calibrate():
 
     # 定义目标角点索引
     pix_index = np.array([
-        [0, 0], [3, 0], [6, 0],
-        [0, 3], [3, 3], [6, 3],
-        [0, 6], [3, 6], [6, 6]
+        [0, 0], [4, 0], [7, 0],
+        [0, 3], [4, 3], [7, 3],
+        [0, 7], [4, 7], [7, 7]
     ])
 
     # --- 2. 数据采集阶段 ---
@@ -597,14 +637,33 @@ def do_calibrate():
     # --- 3. 计算阶段 ---
     # 输入已知的 M_base_wobj
     # robot_pose = [349.673, 47.6705, 151.804, -167.202, 1.04631, -88.6680]
-    robot_pose = [385.930, 35.9785, 167.968, -158.524, 1.68234, -90.0000]
+    # robot_pose = [385.930, 35.9785, 167.968, -158.524, 1.68234, -90.0000]
+    robot_pose = [333.333, 64.68000, 173.923, -157.037, 2.81215, -80.8984]
     M_base_wobj = robot_pose_to_homogeneous_matrix(robot_pose=robot_pose, order='ZYX')
 
     # 自动计算 P_base
-    # 步骤1: 定义Wobj坐标
-    points_in_wobj = define_points_in_work_object_coordinate(pix_index, config['chessboard_grid_size'])
-    # 步骤2: 变换到Base坐标
-    points_in_base = transform_points_form_work2base(points_in_wobj, M_base_wobj)
+    # # 步骤1: 定义Wobj坐标
+    # points_in_wobj = define_points_in_work_object_coordinate(pix_index, config['chessboard_grid_size'])
+    # # 步骤2: 变换到Base坐标
+    # points_in_base = transform_points_form_work2base(points_in_wobj, M_base_wobj)
+    # # 步骤3：基坐标补偿
+    # xyz_scale = np.array([1.11496, 0.8479, 0.9253])
+    # points_in_base[:, 0] = points_in_base[:, 0] * xyz_scale[0]
+    # points_in_base[:, 1] = points_in_base[:, 1] * xyz_scale[1]
+    # points_in_base[:, 2] = points_in_base[:, 2] * xyz_scale[2]
+
+    points_in_base = [
+        [288.0685, 54.43882, -31.32687],
+        [288.0686, -6.361143, -30.49499],
+        [290.4363, -51.35270, -30.49504],
+        [227.2666, 51.17521, -23.19917],
+        [227.2665, -6.104365, -20.25524],
+        [230.7863, -49.36795, -21.27924],
+        [151.2325, 46.18402, -10.71933],
+        [150.3365, -6.743635, -8.543355],
+        [153.9844, -46.48726, -9.119241],
+    ]
+    points_in_base = np.asarray(points_in_base) / 1000
 
     # --- 4. 对比实验 ---
     # === 使用 SolvePnP 的数据进行计算 ===
@@ -651,6 +710,187 @@ def do_calibrate():
     return save_dir
 
 
+def verify_calibration_by_realsense_camera(data_save_dir=None, move_robot=False):
+    """
+    通过RealSense相机验证手眼标定结果，支持用户点击图像获取3D坐标
+    优化点：增加错误处理、可视化标记、深度平滑、结果保存和用户提示
+    """
+    if not data_save_dir:
+        logger.error(f"数据保存文件夹未指定")
+        return
+    # ========== 读取标定结果 ==========
+    txt_name = 'M_base_camera_by_projection.txt'
+    M_base_camera = np.loadtxt(os.path.join(data_save_dir, txt_name), delimiter=' ')
+
+    save_verify_results = True  # 是否保存测量结果
+    save_verify_results_file = os.path.join(data_save_dir, "calibration_verification_results.txt")
+
+    # 存储测量结果
+    measurement_results = []
+
+    # ========== 初始化相机 ==========
+    camera = RealSenseCamera(device_id=246422072474)
+    camera.connect()
+    print(f"相机连接成功!")
+
+    # ========== 初始化机械臂 ==========
+    robot = DensorRobot()
+    default_grasp_pose = [140, 0, 230.0, -167, 2, 81, 5]
+    if move_robot:
+        robot.connect()
+        robot.send_position(default_grasp_pose)
+
+    # ========== 鼠标回调函数 ==========
+    def on_mouse(event, x, y, flags, param):
+        if event == cv2.EVENT_LBUTTONDOWN:
+            # 获取参数
+            rgb = param['rgb']
+            depth = param['aligned_depth']
+            height, width = rgb.shape[:2]
+
+            # 检查点击位置是否在图像范围内
+            if not (0 <= x < width and 0 <= y < height):
+                print("点击位置超出图像范围")
+                return
+
+            # 1.从对齐的深度图获取深度值（注意坐标顺序）
+            depth_value = depth[y, x]
+            depth_value = depth_value[0]
+            if depth_value < 0.1 or depth_value > 0.7:  # 合理深度范围判断
+                print(f"深度值({depth_value:.3f}m)超出有效范围(0.1-0.7m)")
+                return
+            # 2. 将像素点投影到相机坐标系
+            camera_xyz = pixel_to_camera_coordinate(x, y, depth_value, camera.K)
+            # 3. 将相机坐标转换为机械臂基坐标
+            robot_base_xyz = camera_to_robot_coordinate(camera_xyz[0], camera_xyz[1],
+                                                        camera_xyz[2], M_base_camera)
+            # m -> mm
+            robot_base_xyz = robot_base_xyz * 1000
+            # 5. 缩放
+            center_points = np.array([220, 0, 0])
+            # xyz_scale = np.array([1.11496, 0.8479, 0.9253])
+            scale_robot_base_xyz = np.array([220, 0, 0]) + (robot_base_xyz - center_points) * np.array([1.1, 0.85, 1.0])
+            # 4. 显示和记录结果
+            result_str = (f"像素点: ({x},{y}) → 深度: {depth_value:.3f}m → "
+                          f"相机坐标: X={camera_xyz[0]:.4f}m, Y={camera_xyz[1]:.4f}m, Z={camera_xyz[2]:.4f}m → "
+                          f"基座坐标: X={robot_base_xyz[0]:.4f}mm, Y={robot_base_xyz[1]:.4f}mm, Z={robot_base_xyz[2]:.4f}mm → "
+                          f"缩放坐标: X={scale_robot_base_xyz[0]:.4f}mm, Y={scale_robot_base_xyz[1]:.4f}mm, Z={scale_robot_base_xyz[2]:.4f}mm")
+            print(result_str)
+
+            # 6. 移动机械臂到点击点
+            if move_robot:
+                # 先回到安全点
+                robot.send_position(default_grasp_pose)
+                time.sleep(2)
+                # 移动到点击点
+                robot_pose = robot_base_xyz * 1000
+                robot_pose = list(robot_pose)
+                robot_pose.extend(default_grasp_pose[3:])
+                # y轴偏差
+                robot_pose[1] = robot_pose[1] - 20
+                # 停留在上方
+                robot_pose[2] = robot_pose[2] + 50
+                robot.send_position(robot_pose)
+                time.sleep(1)
+
+            # 记录结果
+            measurement_results.append({
+                "pixel": (x, y),
+                "depth": depth_value,
+                "camera_coords": (camera_xyz[0], camera_xyz[1], camera_xyz[2]),
+                "base_coords": (robot_base_xyz[0], robot_base_xyz[1], robot_base_xyz[2]),
+                "depth_origin": depth_value,
+            })
+
+            # 5. 在图像上标记点击点和信息
+            cv2.circle(rgb, (x, y), 5, (0, 0, 255), -1)  # 红色圆点标记
+            cv2.putText(rgb, f"X:{robot_base_xyz[0]:.3f}", (x + 10, y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+            cv2.putText(rgb, f"Y:{robot_base_xyz[1]:.3f}", (x + 10, y + 20),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+            cv2.putText(rgb, f"Z:{robot_base_xyz[2]:.3f}", (x + 10, y + 40),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+
+    # ========== 主循环（增强版） ==========
+    try:
+        print("\n操作说明:")
+        print("1. 点击图像上的点获取其在机械臂基座坐标系中的坐标")
+        print("2. 按 's' 保存当前测量结果到文件")
+        print("3. 按 'r' 清除所有测量结果")
+        print("4. 按 'ESC' 退出程序")
+
+        while True:
+            # 获取图像
+            images = camera.get_image_bundle()
+            if not images or 'rgb' not in images or 'aligned_depth' not in images:
+                print("获取图像失败，重试...")
+                continue
+
+            # 转换色彩空间以适应OpenCV显示
+            rgb = cv2.cvtColor(images['rgb'], cv2.COLOR_RGB2BGR)
+            depth = images['aligned_depth']
+
+            # 显示操作提示
+            cv2.putText(rgb, "ESC:exit | s:save | r:clear | h:home", (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
+
+            # 显示窗口并绑定鼠标事件
+            cv2.imshow('VerifyCalibration', rgb)
+            cv2.setMouseCallback('VerifyCalibration',
+                                 on_mouse, param={'rgb': rgb, 'aligned_depth': depth})
+
+            # 处理键盘事件
+            key = cv2.waitKey(1) & 0xFF
+            if key == 27:  # ESC 退出
+                print("程序退出")
+                break
+            elif key == ord('s') and save_verify_results:  # 保存结果
+                with open(save_verify_results_file, 'w', encoding='utf-8') as f:
+                    for i, res in enumerate(measurement_results, 1):
+                        f.write(f"测量点 {i}:\n")
+                        f.write(f"  像素坐标: {res['pixel']}\n")
+                        f.write(f"  深度值: {res['depth']:.4f}m\n")
+                        f.write(f"  相机坐标: {res['camera_coords']}\n")
+                        f.write(f"  基座坐标: {res['base_coords']}\n")
+                        f.write(f"  深度值(未缩放): {res['depth_origin']:.4f}m\n")
+                        f.write(f"  相机坐标(未缩放): {res['camera_coords_origin']}\n")
+                        f.write(f"  基座坐标(未缩放): {res['base_coords_origin']}\n\n")
+                print(f"已保存 {len(measurement_results)} 个测量结果到 {save_verify_results_file}")
+            elif key == ord('r'):  # 清除结果
+                measurement_results.clear()
+                print("已清除所有测量结果")
+            elif key == ord('h') or key == ord('H'):  # 返回抓取默认点
+                # 执行返回默认抓取点的逻辑
+                if move_robot:
+                    robot.send_position(default_grasp_pose)
+                    time.sleep(2)
+                    print("已返回抓取默认点")
+
+    except Exception as e:
+        print(f"程序运行出错: {str(e)}")
+    finally:
+        # 资源清理
+        cv2.destroyAllWindows()
+        camera.disconnect()
+        # 自动保存结果
+        if save_verify_results and measurement_results:
+            with open(save_verify_results_file, 'w') as f:
+                for i, res in enumerate(measurement_results, 1):
+                    f.write(f"测量点 {i}:\n")
+                    f.write(f"  像素坐标: {res['pixel']}\n")
+                    f.write(f"  深度值: {res['depth']:.4f}m\n")
+                    f.write(f"  相机坐标: {res['camera_coords']}\n")
+                    f.write(f"  基座坐标: {res['base_coords']}\n")
+                    f.write(f"  深度值(未缩放): {res['depth_origin']:.4f}m\n")
+                    f.write(f"  相机坐标(未缩放): {res['camera_coords_origin']}\n")
+                    f.write(f"  基座坐标(未缩放): {res['base_coords_origin']}\n\n")
+            print(f"自动保存 {len(measurement_results)} 个测量结果到 {save_verify_results_file}")
+        if move_robot:
+            robot.send_position(default_grasp_pose)
+            time.sleep(2)
+            robot.close()
+
+
 def test_calculate_tcp_by_sphere_fitting():
     list_flange_pose = [
         # [352.7166, 3.834210, 275.4843, 177.1057, -7.580472, -151.7946],
@@ -694,6 +934,8 @@ def test_calculate_tcp_by_sphere_fitting():
 # ==============================================================================
 if __name__ == '__main__':
     # test_calculate_tcp_by_sphere_fitting()
-
     # 标定
-    do_calibrate()
+    # do_calibrate_one_step()
+    # 验证
+    save_dir = os.path.join(BASE_DIR, "nine_point_calibrate_data")
+    verify_calibration_by_realsense_camera(data_save_dir=save_dir)

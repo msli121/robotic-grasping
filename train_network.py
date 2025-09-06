@@ -226,10 +226,42 @@ def train(epoch, net, device, train_data, optimizer, batches_per_epoch, vis=Fals
 def run():
     args = parse_args()
 
+    # Get the compute device
+    device = get_device(args.force_cpu)
+
+    # Load the network
+    logging.info('Loading Network...')
+    input_channels = 1 * args.use_depth + 3 * args.use_rgb
+    network = get_network(args.network)
+    # 选择改进后的网络
+    if args.network.lower() in ['grconvnet_mas', 'grconvnet_goa']:
+        net = network(
+            input_channels=input_channels,  # 输入通道数
+            dropout=bool(args.use_dropout),  # 是否使用dropout
+            prob=args.dropout_prob,  # dropout概率
+            channel_size=args.channel_size,  # 通道数
+            use_fpn=bool(args.fpn),  # 是否使用FPN
+            use_cbam=bool(args.cbam),  # 是否使用CBAM
+            use_goa=bool(args.goa),  # 是否使用GOA
+            use_aff=bool(args.aff),  # 是否使用AFF
+            use_spd=bool(args.spdconv),  # 是否使用SPD
+            spd_scale=args.spd_scale,  # SPD卷积缩放因子
+        )
+    else:
+        # 选择原始网络
+        net = network(
+            input_channels=input_channels,
+            dropout=args.use_dropout,
+            prob=args.dropout_prob,
+            channel_size=args.channel_size
+        )
+    net = net.to(device)
+    logging.info('Done')
+
     # Set-up output directories
     dt = datetime.datetime.now().strftime('%Y%m%d_%H%M')
-    net_desc = '{}_{}'.format(dt, '_'.join(args.description.split()))
-
+    net_config_name = net.get_config_name()
+    net_desc = f"{dt}_{'_'.join(args.description.split())}_{net_config_name}"
     save_folder = os.path.join(args.logdir, net_desc)
     if not os.path.exists(save_folder):
         os.makedirs(save_folder)
@@ -257,9 +289,6 @@ def run():
     console.setFormatter(formatter)
     # add the handler to the root logger
     logging.getLogger('').addHandler(console)
-
-    # Get the compute device
-    device = get_device(args.force_cpu)
 
     # Load Dataset
     logging.info('Loading {} Dataset...'.format(args.dataset.title()))
@@ -299,35 +328,6 @@ def run():
         num_workers=args.num_workers,
         sampler=val_sampler
     )
-    logging.info('Done')
-
-    # Load the network
-    logging.info('Loading Network...')
-    input_channels = 1 * args.use_depth + 3 * args.use_rgb
-    network = get_network(args.network)
-    # 选择网络
-    if args.network.lower() in ['grconvnet_mas', 'grconvnet_goa']:
-        net = network(
-            input_channels=input_channels,
-            channel_size=args.channel_size,
-            dropout=bool(args.use_dropout),
-            prob=args.dropout_prob,
-            use_fpn=bool(args.fpn),
-            use_cbam=bool(args.cbam),
-            use_goa=bool(args.goa),
-            use_aff=bool(args.aff),
-            use_spd=bool(args.spdconv),
-            spd_scale=args.spd_scale,
-        )
-    else:
-        net = network(
-            input_channels=input_channels,
-            dropout=args.use_dropout,
-            prob=args.dropout_prob,
-            channel_size=args.channel_size
-        )
-
-    net = net.to(device)
     logging.info('Done')
 
     if args.optim.lower() == 'adam':
@@ -399,5 +399,7 @@ if __name__ == '__main__':
 
     # goa 改进全开 jacquard
     # python train_network.py --network grconvnet_goa --dataset jacquard --dataset-path D:\\datasets\\Jacquard --description training_Jacquard_grconvnet_goa --input-size 224 --use-dropout 1 --fpn 1 --goa 1 --spdconv 1 --spd-scale 2 --split 0.9
+
+    # python train_network.py --network grconvnet_goa --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell_grconvnet_goa --use-dropout 1 --input-size 224 --split 0.8
 
     run()

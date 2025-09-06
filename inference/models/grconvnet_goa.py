@@ -299,7 +299,7 @@ class GenerativeResnet(GraspModel):
         if use_cbam and use_goa:
             raise ValueError("CBAM和GOA不能同时使用")
 
-        # === 编码器 (与原始完全一致) ===
+        # === 编码器 (与原网络完全一致) ===
         self.conv1 = nn.Conv2d(input_channels, cs, kernel_size=9, stride=1, padding=4)
         self.bn1 = nn.BatchNorm2d(cs)
 
@@ -325,7 +325,7 @@ class GenerativeResnet(GraspModel):
         if use_spd:
             self.spd = SPDConv(cs, scale=spd_scale, out_channels=cs)
 
-        # === 解码器 (保持原始输出层逻辑) ===
+        # === 解码器 (保持原网络输出层逻辑) ===
         self.conv4 = nn.ConvTranspose2d(cs * 4, cs * 2, kernel_size=4, stride=2, padding=1, output_padding=1)
         self.bn4 = nn.BatchNorm2d(cs * 2)
 
@@ -339,8 +339,8 @@ class GenerativeResnet(GraspModel):
             self.attention1 = CBAM(cs * 2)
             self.attention2 = CBAM(cs)
         elif use_goa:
-            self.attention1 = GraspOrientedAttention(cs * 2)  # 创新
-            self.attention2 = GraspOrientedAttention(cs)  # 创新
+            self.attention1 = GraspOrientedAttention(cs * 2)
+            self.attention2 = GraspOrientedAttention(cs)
         else:
             self.attention1 = nn.Identity()
             self.attention2 = nn.Identity()
@@ -353,21 +353,21 @@ class GenerativeResnet(GraspModel):
             self.fusion1 = self._simple_fusion
             self.fusion2 = self._simple_fusion
 
-        # === 输出头 (与原始保持一致) ===
+        # === 输出头 (与原网络保持一致) ===
         # 注意：使用2x2卷积保持与原始grconvnet3.py一致
         self.pos_output = nn.Conv2d(in_channels=cs, out_channels=output_channels, kernel_size=2)
         self.cos_output = nn.Conv2d(in_channels=cs, out_channels=output_channels, kernel_size=2)
         self.sin_output = nn.Conv2d(in_channels=cs, out_channels=output_channels, kernel_size=2)
         self.width_output = nn.Conv2d(in_channels=cs, out_channels=output_channels, kernel_size=2)
 
-        # === Dropout (与原始保持一致) ===
+        # === Dropout (与原网络保持一致) ===
         self.dropout = dropout
         self.dropout_pos = nn.Dropout(p=prob)
         self.dropout_cos = nn.Dropout(p=prob)
         self.dropout_sin = nn.Dropout(p=prob)
         self.dropout_wid = nn.Dropout(p=prob)
 
-        # === 权重初始化 (与原始保持一致) ===
+        # === 权重初始化 (与原网络保持一致) ===
         for m in self.modules():
             if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d)):
                 nn.init.xavier_uniform_(m.weight, gain=1)
@@ -409,7 +409,7 @@ class GenerativeResnet(GraspModel):
         if self.use_spd:
             spd_features = self.spd(c1)
 
-        # === 解码阶段 (保持原始流程) ===
+        # === 解码阶段 (保持原网络流程) ===
         # 第一阶段：56x56 -> 112x112
         x = F.relu(self.bn4(self.conv4(c4)))
         # FPN特征融合，第一个融合点
@@ -432,7 +432,7 @@ class GenerativeResnet(GraspModel):
         # 特征细化
         x = self.conv6(x)
 
-        # === 输出阶段 (与原始完全一致) ===
+        # === 输出阶段 (与原网络一致) ===
         if self.dropout:
             pos_output = self.pos_output(self.dropout_pos(x))
             cos_output = self.cos_output(self.dropout_cos(x))
@@ -449,7 +449,7 @@ class GenerativeResnet(GraspModel):
     def get_config_name(self):
         """获取配置名称 - 便于实验管理"""
         config = self.config
-        name_parts = ['GRConvNet']
+        name_parts = []
 
         additions = []
         if config['use_fpn']: additions.append('FPN')
@@ -551,7 +551,7 @@ if __name__ == "__main__":
 
         # 测试前向传播
         with torch.no_grad():
-            x = torch.randn(2, 4, 300, 300).to(device)
+            x = torch.randn(2, 4, 224, 224).to(device)
             outputs = model(x)
 
             print(f"输出形状: {[out.shape for out in outputs]}")

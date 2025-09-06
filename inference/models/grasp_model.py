@@ -47,6 +47,9 @@ class GraspModel(nn.Module):
             'width': width_pred
         }
 
+    def get_config_name(self):
+        return ""
+
 
 class ResidualBlock(nn.Module):
     """

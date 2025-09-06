@@ -48,7 +48,7 @@ class GraspModel(nn.Module):
         }
 
     def get_config_name(self):
-        return ""
+        return "grconvnet"
 
 
 class ResidualBlock(nn.Module):

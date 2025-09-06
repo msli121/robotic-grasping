@@ -449,19 +449,24 @@ class GenerativeResnet(GraspModel):
     def get_config_name(self):
         """获取配置名称 - 便于实验管理"""
         config = self.config
-        name_parts = []
+        name_parts = ['grconvnet_goa']
 
         additions = []
-        if config['use_fpn']: additions.append('FPN')
-        if config['use_spd']: additions.append('SPD')
-        if config['use_cbam']: additions.append('CBAM')
-        if config['use_goa']: additions.append('GOA')
-        if config['use_aff']: additions.append('AFF')
+        if config['use_fpn']:
+            additions.append('fpn')
+        if config['use_spd']:
+            additions.append('spd')
+        if config['use_cbam']:
+            additions.append('cbam')
+        if config['use_goa']:
+            additions.append('goa')
+        if config['use_aff']:
+            additions.append('aff')
 
         if additions:
             name_parts.append('+'.join(additions))
         else:
-            name_parts.append('Baseline')
+            name_parts.append('baseline')
 
         return '_'.join(name_parts)
 

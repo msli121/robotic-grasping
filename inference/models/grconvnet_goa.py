@@ -257,6 +257,7 @@ class GenerativeResnet(GraspModel):
     支持 CBAM 模式和 GOA 模式的注意力机制切换
     完全兼容原框架的训练/测试流程，支持以下配置：
     - baseline: 原始结构
+    - +UNet: 添加跳跃连接
     - +FPN: 添加多尺度特征
     - +SPD: 添加空间增强
     - +CBAM: 添加传统注意力
@@ -276,16 +277,18 @@ class GenerativeResnet(GraspModel):
                  dropout=False,
                  prob=0.0,
                  # 新增参数：模块开关
-                 use_fpn=False,
-                 use_cbam=False,
-                 use_goa=False,
-                 use_aff=False,
-                 use_spd=False,
-                 spd_scale=2):
+                 use_unet=False,  # 控制U-Net跳跃连接
+                 use_fpn=False,  # 控制FPN多尺度特征
+                 use_cbam=False,  # 控制CBAM传统注意力
+                 use_goa=False,  # 控制GOA抓取导向注意力
+                 use_aff=False,  # 控制AFF自适应特征融合
+                 use_spd=False,  # 控制SPD空间增强
+                 spd_scale=2):  # 新增参数：SPD缩放因子
         super(GenerativeResnet, self).__init__()
 
         # 保存配置
         self.config = {
+            'use_unet': use_unet,
             'use_fpn': use_fpn,
             'use_spd': use_spd,
             'use_cbam': use_cbam,
@@ -293,16 +296,18 @@ class GenerativeResnet(GraspModel):
             'use_aff': use_aff,
             'spd_scale': spd_scale
         }
-        self.use_fpn, self.use_spd, self.use_goa, self.use_aff = use_fpn, use_spd, use_goa, use_aff
+        self.use_unet, self.use_fpn, self.use_spd, self.use_goa, self.use_aff = use_unet, use_fpn, use_spd, use_goa, use_aff
         cs = channel_size
 
         # 互斥检查
         if use_cbam and use_goa:
             raise ValueError("CBAM和GOA不能同时使用")
+        if use_unet and use_fpn:
+            raise ValueError("U-Net和FPN是两种不同的跳跃连接策略, 不能同时使用")
         if use_spd and not use_fpn:
-            raise ValueError("SPD模式必须与FPN模式同时使用")
+            print("Warning: SPD-Conv通常与FPN一起使用以获得最佳效果")
 
-        # === 编码器 (与原网络完全一致) ===
+        # === 1.编码器 (与原网络完全一致) ===
         self.conv1 = nn.Conv2d(input_channels, cs, kernel_size=9, stride=1, padding=4)
         self.bn1 = nn.BatchNorm2d(cs)
         self.conv2 = nn.Conv2d(cs, cs * 2, kernel_size=4, stride=2, padding=1)
@@ -316,31 +321,27 @@ class GenerativeResnet(GraspModel):
         self.res4 = ResidualBlock(cs * 4, cs * 4)
         self.res5 = ResidualBlock(cs * 4, cs * 4)
 
-        # === 解码器 (保持原网络输出层逻辑) ===
+        # === 2.解码器 (保持原网络输出层逻辑) ===
         self.conv4 = nn.ConvTranspose2d(cs * 4, cs * 2, kernel_size=4, stride=2, padding=1, output_padding=1)
         self.bn4 = nn.BatchNorm2d(cs * 2)
         self.conv5 = nn.ConvTranspose2d(cs * 2, cs, kernel_size=4, stride=2, padding=2, output_padding=1)
         self.bn5 = nn.BatchNorm2d(cs)
         self.conv6 = nn.ConvTranspose2d(cs, cs, kernel_size=9, stride=1, padding=4)
 
-        # === 可选增强模块 ===
-        # FPN 模式下的专用模块 ===
+        # === 3. 跳跃连接/特征增强模块 可选增强模块 ===
         if use_fpn:
             self.fpn = FPN([cs, cs * 2, cs * 4], cs)
             self.fpn_proj1 = nn.Conv2d(cs, cs * 2, kernel_size=1)  # p3(cs) -> x1(cs*2)
             self.fpn_proj2 = nn.Conv2d(cs, cs, kernel_size=1)  # p2(cs) -> x2(cs) (通道数相同，可选)
-            # 通道对齐投影
-            # self.channel_proj = nn.Conv2d(cs, cs * 2, kernel_size=1)
         else:
             # === U-Net 模式下的专用模块 (用于对齐跳跃连接的通道) ===
             self.unet_proj1 = nn.Conv2d(cs * 2, cs * 2, kernel_size=1)  # c2(cs*2) -> x1(cs*2)
             self.unet_proj2 = nn.Conv2d(cs, cs, kernel_size=1)  # c1(cs)   -> x2(cs)
-
         # === 可选的 SPD 模块 (仅在 FPN 模式下考虑) ===
         if use_spd:
             self.spd = SPDConv(cs, scale=spd_scale, out_channels=cs)
 
-        # === 注意力模块 ===
+        # === 4. 注意力模块 (按需创建) ===
         if use_cbam:
             self.attention1 = CBAM(cs * 2)
             self.attention2 = CBAM(cs)
@@ -351,7 +352,7 @@ class GenerativeResnet(GraspModel):
             self.attention1 = nn.Identity()
             self.attention2 = nn.Identity()
 
-        # === 特征融合模块 ===
+        # ===  5. 特征融合模块 (按需创建) ===
         if use_aff:
             # 创新融合
             self.fusion1 = AdaptiveFeatureFusion(cs * 2)
@@ -405,76 +406,57 @@ class GenerativeResnet(GraspModel):
     def forward(self, x_in):
         """
         前向传播函数
-        支持 FPN 模式和 U-Net 模式的动态切换。
+        支持 FPN 模式和 U-Net 模式的动态切换
         """
         # 1. 编码阶段: 提取多尺度特征
         # c1: (cs, 224, 224), c2: (cs*2, 112, 112), c4: (cs*4, 56, 56)
         c1, c2, c4 = self._encode(x_in)
 
-        # 2. 解码与融合阶段
+        # 2. 解码阶段 - 第一次上采样
+        # x: (cs*2, 112, 112)
+        x = F.relu(self.bn4(self.conv4(c4)))
+
+        # 3. 第一次可选的跳跃连接、融合与注意力
+        # 如果 use_fpn 和 use_unet 都为 False, 则 x 保持不变 (Baseline)
         if self.use_fpn:
-            # --- FPN 模式路径 ---
-            # 从编码器特征生成特征金字塔
-            # p2: (cs, 224, 224), p3: (cs, 112, 112)
-            p2, p3, _ = self.fpn(c1, c2, c4)
+            # FPN 模式
+            p2, p3, _ = self.fpn(c1, c2, c4)  # 先计算特征金字塔
+            p3_proj = self.fpn_proj1(p3)
+            # 特征融合
+            x = self.fusion1(x, p3_proj)
+        elif self.use_unet:
+            # U-Net 模式
+            c2_proj = self.unet_proj1(c2)
+            # 特征融合
+            x = self.fusion1(x, c2_proj)
 
-            # 第一次上采样
-            # x: (cs*2, 112, 112)
-            x = F.relu(self.bn4(self.conv4(c4)))
-
-            # c. 第一次融合与注意力
-            p3_proj = self.fpn_proj1(p3)  # 对齐通道: cs -> cs*2
-            x = self.fusion1(x, p3_proj)  # AFF 或 Add
-            x = self.attention1(x)  # GOA 或 CBAM
-
-            # d. 第二次上采样
-            # x: (cs, 224, 224)
-            x = F.relu(self.bn5(self.conv5(x)))
-
-            # e. 第二次融合与注意力
-            # e.1 准备所有待融合的特征
-            features_to_fuse = [x]
-            p2_proj = self.fpn_proj2(p2)  # 对齐通道 (可选，但保持一致性)
-            features_to_fuse.append(p2_proj)
+        # 4. 解码阶段 - 第二次上采样
+        # x: (cs, 224, 224)
+        x = F.relu(self.bn5(self.conv5(x)))
+        # 5. 第二次可选的跳跃连接、融合与注意力
+        if self.use_fpn:
+            # FPN 模式
+            # 注意: p2, p3 已经在前面计算过，这里直接用 p2
+            p2_proj = self.fpn_proj2(p2)
+            x = self.fusion2(x, p2_proj)
+            # 在 FPN 模式下，才考虑融合 SPD 特征
             if self.use_spd:
-                spd_features = self.spd(c1)  # (cs, 112, 112)
-                # 需要上采样以匹配尺寸
-                spd_features_up = F.interpolate(spd_features, size=x.shape[-2:], mode='bilinear', align_corners=True)
-                features_to_fuse.append(spd_features_up)
+                spd_features = self.spd(c1)
+                spd_up = F.interpolate(spd_features, size=x.shape[-2:], mode='bilinear', align_corners=True)
+                # 再次融合
+                x = self.fusion2(x, spd_up)
+        elif self.use_unet:
+            # U-Net 模式
+            c1_proj = self.unet_proj2(c1)
+            x = self.fusion2(x, c1_proj)
 
-            # e.2 依次进行融合
-            # 注意: 我们的融合模块 (AFF/Add) 设计为接收两个输入。
-            # 在这里进行链式融合
-            fused_x = features_to_fuse[0]
-            for feature in features_to_fuse[1:]:
-                fused_x = self.fusion2(fused_x, feature)
-            # 对最终融合的特征应用注意力
-            x = self.attention2(fused_x)
+        # 6. 应用注意力模块
+        x = self.attention2(x)
 
-        else:
-            # --- U-Net 模式路径 ---
-            # a. 第一次上采样
-            # x: (cs*2, 112, 112)
-            x = F.relu(self.bn4(self.conv4(c4)))
-
-            # b. 第一次跳跃连接与注意力
-            c2_proj = self.unet_proj1(c2)  # 对齐通道
-            x = self.fusion1(x, c2_proj)  # AFF 或 Add
-            x = self.attention1(x)  # GOA 或 CBAM
-
-            # c. 第二次上采样
-            # x: (cs, 224, 224)
-            x = F.relu(self.bn5(self.conv5(x)))
-
-            # d. 第二次跳跃连接与注意力
-            c1_proj = self.unet_proj2(c1)  # 对齐通道
-            x = self.fusion2(x, c1_proj)  # AFF 或 Add
-            x = self.attention2(x)  # GOA 或 CBAM
-
-        # 3. 最终卷积层，细化特征
+        # 7. 最终卷积层，细化特征
         x = self.conv6(x)
 
-        # 4. 输出头，生成最终的抓取图
+        # 8. 输出头，生成最终的抓取图
         if self.dropout:
             pos_output = self.pos_output(self.dropout_pos(x))
             cos_output = self.cos_output(self.dropout_cos(x))
@@ -491,9 +473,11 @@ class GenerativeResnet(GraspModel):
     def get_config_name(self):
         """获取配置名称 - 便于实验管理"""
         config = self.config
-        name_parts = ['grconvnet_goa']
+        name_parts = ['goanet']
 
         additions = []
+        if config['use_unet']:
+            additions.append('unet')
         if config['use_fpn']:
             additions.append('fpn')
         if config['use_spd']:
@@ -581,7 +565,7 @@ if __name__ == "__main__":
         'goa_aff': {'use_goa': True, 'use_aff': True},
         'fpn_spd': {'use_fpn': True, 'use_spd': True},
         'fpn_spd_cam': {'use_fpn': True, 'use_spd': True, 'use_cbam': True},
-        'fpn_goa': {'use_goa': True, 'use_goa': True},
+        'fpn_goa': {'use_fpn': True, 'use_goa': True},
     }
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

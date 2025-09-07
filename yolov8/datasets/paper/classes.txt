@@ -1,0 +1,33 @@
+Heart Block
+Trapezoid Block
+Cube
+Triangular Prism
+Pentagonal Prism
+Rhombic Prism
+Cross Block
+Hexagonal Prism
+Cylinder
+Star Polyhedron
+Ballpoint Pen
+Utility Knife
+Multi-tool Knife
+Right-angle Cutter
+Ointment Tube
+Lighter
+USB Flash Drive
+Laser Pointer
+Battery
+Adhesive Tape
+Spirit Level
+Screwdriver
+Hinge
+Screw
+Nut
+Compression Spring
+Clip
+Toothbrush
+electronic switch
+marker pen
+marking pen
+2B pencil
+tape

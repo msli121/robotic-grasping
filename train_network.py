@@ -79,6 +79,8 @@ def parse_args():
                         help='Random seed for numpy')
 
     # 优化后的网络grconvnet_mas的参数配置
+    parser.add_argument('--unet', type=int, default=0,
+                        help='Use UNet for training (1/0)')
     parser.add_argument('--fpn', type=int, default=0,
                         help='Use FPN for training (1/0)')
     parser.add_argument('--goa', type=int, default=0,
@@ -240,6 +242,7 @@ def run():
             dropout=bool(args.use_dropout),  # 是否使用dropout
             prob=args.dropout_prob,  # dropout概率
             channel_size=args.channel_size,  # 通道数
+            use_unet=bool(args.unet),  # 是否使用UNet
             use_fpn=bool(args.fpn),  # 是否使用FPN
             use_cbam=bool(args.cbam),  # 是否使用CBAM
             use_goa=bool(args.goa),  # 是否使用GOA
@@ -261,7 +264,7 @@ def run():
     # Set-up output directories
     dt = datetime.datetime.now().strftime('%Y%m%d_%H%M')
     net_config_name = net.get_config_name()
-    net_desc = f"{dt}_{'_'.join(args.description.split())}_{net_config_name}"
+    net_desc = f"{dt}_{'_'.join(args.description.split())}_{args.input_size}_{net_config_name}"
     save_folder = os.path.join(args.logdir, net_desc)
     if not os.path.exists(save_folder):
         os.makedirs(save_folder)
@@ -401,25 +404,25 @@ if __name__ == '__main__':
     # python train_network.py --network grconvnet_goa --dataset jacquard --dataset-path D:\\datasets\\Jacquard --description training_Jacquard_grconvnet_goa --input-size 224 --use-dropout 1 --fpn 1 --goa 1 --spdconv 1 --spd-scale 2 --split 0.9
 
     # 0. 基线
-    # python train_network.py --network grconvnet_goa --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell --use-dropout 1 --input-size 224 --split 0.8
+    # python train_network.py --network grconvnet_goa --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell --use-dropout 1 --input-size 300 --split 0.8
 
     # 1. 基线 + FPN + SPD-Conv
     # 目的: 验证 FPN 和 SPD-Conv 这两个被广泛应用的结构改进，在你基线上是否能带来提升
-    # python train_network.py --network grconvnet_goa --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell --use-dropout 1 --input-size 224 --split 0.8 --fpn 1 --spdconv 1 --goa 0 --aff 0 --cbam 0
+    # python train_network.py --network grconvnet_goa --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell --use-dropout 1 --input-size 300 --split 0.8 --fpn 1 --spdconv 1 --goa 0 --aff 0 --cbam 0
 
     # 2. 强基线 (FPN+SPD) + CBAM (作为对比)
-    # python train_network.py --network grconvnet_goa --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell --use-dropout 1 --input-size 224 --split 0.8 --fpn 1 --spdconv 1 --goa 0 --aff 0 --cbam 1
+    # python train_network.py --network grconvnet_goa --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell --use-dropout 1 --input-size 300 --split 0.8 --fpn 1 --spdconv 1 --goa 0 --aff 0 --cbam 1
 
     # 3. 强基线 (FPN+SPD) + GOA (核心创新点)
-    # python train_network.py --network grconvnet_goa --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell --use-dropout 1 --input-size 224 --split 0.8 --fpn 1 --spdconv 1 --goa 1 --aff 0 --cbam 0
+    # python train_network.py --network grconvnet_goa --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell --use-dropout 1 --input-size 300 --split 0.8 --fpn 1 --spdconv 1 --goa 1 --aff 0 --cbam 0
 
     # 4. 完整模型: 强基线 (FPN+SPD) + GOA + AFF
-    # python train_network.py --network grconvnet_goa --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell --use-dropout 1 --input-size 224 --split 0.8 --fpn 1 --spdconv 1 --goa 1 --aff 1 --cbam 0
+    # python train_network.py --network grconvnet_goa --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell --use-dropout 1 --input-size 300 --split 0.8 --fpn 1 --spdconv 1 --goa 1 --aff 1 --cbam 0
 
     # 5. only goa
-    # python train_network.py --network grconvnet_goa --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell --use-dropout 1 --input-size 224 --split 0.8 --goa 1
+    # python train_network.py --network grconvnet_goa --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell --use-dropout 1 --input-size 300 --split 0.8 --goa 1
     # 6. only aff
-    # python train_network.py --network grconvnet_goa --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell --use-dropout 1 --input-size 224 --split 0.8 --aff 1
+    # python train_network.py --network grconvnet_goa --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell --use-dropout 1 --input-size 300 --split 0.8 --aff 1
     # 7. goa + aff
-    # python train_network.py --network grconvnet_goa --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell --use-dropout 1 --input-size 224 --split 0.8 --goa 1 --aff 1
+    # python train_network.py --network grconvnet_goa --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell --use-dropout 1 --input-size 300 --split 0.8 --goa 1 --aff 1
     run()

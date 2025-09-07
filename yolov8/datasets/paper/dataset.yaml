@@ -1,0 +1,41 @@
+path: D:\PycharmProjects\robotic-grasping\yolov8\datasets\paper # dataset root dir
+train: train  # train images (relative to 'path') 128 images
+val: val  # val images (relative to 'path') 128 images
+test:  # test images (optional)
+
+# 类别数
+nc: 32
+# 类别名称
+names:
+  0: 爱心方块
+  1: 梯形方块
+  2: 正方方块
+  3: 三角方块
+  4: 五边形方块
+  5: 菱形方块
+  6: 十字方块
+  7: 六边形方块
+  8: 圆柱体
+  9: 五角星
+  10: 中性笔
+  11: 美工刀
+  12: 多功能小刀
+  13: 直角工具刀
+  14: 药膏
+  15: 打火机
+  16: U盘
+  17: 激光笔
+  18: 电池
+  19: 胶带
+  20: 水平仪
+  21: 螺丝刀
+  22: 铰链
+  23: 螺丝
+  24: 螺母
+  25: 弹簧
+  26: 夹子
+  27: 牙刷
+  28: 开关配件
+  29: 马克笔
+  30: 涂卡笔
+  31: 胶带

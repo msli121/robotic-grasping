@@ -416,4 +416,10 @@ if __name__ == '__main__':
     # 4. 完整模型: 强基线 (FPN+SPD) + GOA + AFF
     # python train_network.py --network grconvnet_goa --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell --use-dropout 1 --input-size 224 --split 0.8 --fpn 1 --spdconv 1 --goa 1 --aff 1 --cbam 0
 
+    # 5. only goa
+    # python train_network.py --network grconvnet_goa --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell --use-dropout 1 --input-size 224 --split 0.8 --goa 1
+    # 6. only aff
+    # python train_network.py --network grconvnet_goa --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell --use-dropout 1 --input-size 224 --split 0.8 --aff 1
+    # 7. goa + aff
+    # python train_network.py --network grconvnet_goa --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell --use-dropout 1 --input-size 224 --split 0.8 --goa 1 --aff 1
     run()

@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 class RealSenseCamera:
     def __init__(self,
-                 device_id,
+                 device_id=None,
                  width=640,
                  height=480,
                  fps=6):
@@ -34,7 +34,8 @@ class RealSenseCamera:
         # Start and configure
         self.pipeline = rs.pipeline()
         config = rs.config()
-        config.enable_device(str(self.device_id))
+        if self.device_id:
+            config.enable_device(str(self.device_id))
         config.enable_stream(rs.stream.depth, self.width, self.height, rs.format.z16, self.fps)
         config.enable_stream(rs.stream.color, self.width, self.height, rs.format.rgb8, self.fps)
         cfg = self.pipeline.start(config)

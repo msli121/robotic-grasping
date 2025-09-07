@@ -253,7 +253,8 @@ class AdaptiveFeatureFusion(nn.Module):
 class GenerativeResnet(GraspModel):
     """
     改进版 GR-ConvNet，集成GOA和AFF模块
-
+    支持 FPN 模式和 U-Net 模式的跳跃连接切换
+    支持 CBAM 模式和 GOA 模式的注意力机制切换
     完全兼容原框架的训练/测试流程，支持以下配置：
     - baseline: 原始结构
     - +FPN: 添加多尺度特征
@@ -298,17 +299,16 @@ class GenerativeResnet(GraspModel):
         # 互斥检查
         if use_cbam and use_goa:
             raise ValueError("CBAM和GOA不能同时使用")
+        if use_spd and not use_fpn:
+            raise ValueError("SPD模式必须与FPN模式同时使用")
 
         # === 编码器 (与原网络完全一致) ===
         self.conv1 = nn.Conv2d(input_channels, cs, kernel_size=9, stride=1, padding=4)
         self.bn1 = nn.BatchNorm2d(cs)
-
         self.conv2 = nn.Conv2d(cs, cs * 2, kernel_size=4, stride=2, padding=1)
         self.bn2 = nn.BatchNorm2d(cs * 2)
-
         self.conv3 = nn.Conv2d(cs * 2, cs * 4, kernel_size=4, stride=2, padding=1)
         self.bn3 = nn.BatchNorm2d(cs * 4)
-
         # 残差块
         self.res1 = ResidualBlock(cs * 4, cs * 4)
         self.res2 = ResidualBlock(cs * 4, cs * 4)
@@ -316,23 +316,29 @@ class GenerativeResnet(GraspModel):
         self.res4 = ResidualBlock(cs * 4, cs * 4)
         self.res5 = ResidualBlock(cs * 4, cs * 4)
 
-        # === 可选增强模块 ===
-        if use_fpn:
-            self.fpn = FPN([cs, cs * 2, cs * 4], cs)
-            # 通道对齐投影
-            self.channel_proj = nn.Conv2d(cs, cs * 2, kernel_size=1)
-
-        if use_spd:
-            self.spd = SPDConv(cs, scale=spd_scale, out_channels=cs)
-
         # === 解码器 (保持原网络输出层逻辑) ===
         self.conv4 = nn.ConvTranspose2d(cs * 4, cs * 2, kernel_size=4, stride=2, padding=1, output_padding=1)
         self.bn4 = nn.BatchNorm2d(cs * 2)
-
         self.conv5 = nn.ConvTranspose2d(cs * 2, cs, kernel_size=4, stride=2, padding=2, output_padding=1)
         self.bn5 = nn.BatchNorm2d(cs)
-
         self.conv6 = nn.ConvTranspose2d(cs, cs, kernel_size=9, stride=1, padding=4)
+
+        # === 可选增强模块 ===
+        # FPN 模式下的专用模块 ===
+        if use_fpn:
+            self.fpn = FPN([cs, cs * 2, cs * 4], cs)
+            self.fpn_proj1 = nn.Conv2d(cs, cs * 2, kernel_size=1)  # p3(cs) -> x1(cs*2)
+            self.fpn_proj2 = nn.Conv2d(cs, cs, kernel_size=1)  # p2(cs) -> x2(cs) (通道数相同，可选)
+            # 通道对齐投影
+            # self.channel_proj = nn.Conv2d(cs, cs * 2, kernel_size=1)
+        else:
+            # === U-Net 模式下的专用模块 (用于对齐跳跃连接的通道) ===
+            self.unet_proj1 = nn.Conv2d(cs * 2, cs * 2, kernel_size=1)  # c2(cs*2) -> x1(cs*2)
+            self.unet_proj2 = nn.Conv2d(cs, cs, kernel_size=1)  # c1(cs)   -> x2(cs)
+
+        # === 可选的 SPD 模块 (仅在 FPN 模式下考虑) ===
+        if use_spd:
+            self.spd = SPDConv(cs, scale=spd_scale, out_channels=cs)
 
         # === 注意力模块 ===
         if use_cbam:
@@ -347,9 +353,11 @@ class GenerativeResnet(GraspModel):
 
         # === 特征融合模块 ===
         if use_aff:
-            self.fusion1 = AdaptiveFeatureFusion(cs * 2)  # 创新
-            self.fusion2 = AdaptiveFeatureFusion(cs)  # 创新
+            # 创新融合
+            self.fusion1 = AdaptiveFeatureFusion(cs * 2)
+            self.fusion2 = AdaptiveFeatureFusion(cs)
         else:
+            # 使用加法简单融合
             self.fusion1 = self._simple_fusion
             self.fusion2 = self._simple_fusion
 
@@ -389,50 +397,84 @@ class GenerativeResnet(GraspModel):
         return c1, c2, c4
 
     def _simple_fusion(self, x1, x2):
-        """简单相加融合"""
+        """U-Net 风格的简单相加融合, 确保尺寸一致"""
         if x2.shape[-2:] != x1.shape[-2:]:
-            x2 = F.interpolate(x2, size=x1.shape[-2:], mode='nearest')
+            x2 = F.interpolate(x2, size=x1.shape[-2:], mode='bilinear', align_corners=True)
         return x1 + x2
 
     def forward(self, x_in):
         """
-        前向传播 - 完全兼容原框架的输入输出格式
+        前向传播函数
+        支持 FPN 模式和 U-Net 模式的动态切换。
         """
-        # === 编码阶段 ===
+        # 1. 编码阶段: 提取多尺度特征
+        # c1: (cs, 224, 224), c2: (cs*2, 112, 112), c4: (cs*4, 56, 56)
         c1, c2, c4 = self._encode(x_in)
 
-        # === 多尺度特征提取 ===
+        # 2. 解码与融合阶段
         if self.use_fpn:
-            p2, p3, p4 = self.fpn(c1, c2, c4)
+            # --- FPN 模式路径 ---
+            # 从编码器特征生成特征金字塔
+            # p2: (cs, 224, 224), p3: (cs, 112, 112)
+            p2, p3, _ = self.fpn(c1, c2, c4)
 
-        # === SPD空间增强 ===
-        if self.use_spd:
-            spd_features = self.spd(c1)
+            # 第一次上采样
+            # x: (cs*2, 112, 112)
+            x = F.relu(self.bn4(self.conv4(c4)))
 
-        # === 解码阶段 (保持原网络流程) ===
-        # 第一阶段：56x56 -> 112x112
-        x = F.relu(self.bn4(self.conv4(c4)))
-        # FPN特征融合，第一个融合点
-        if self.use_fpn:
-            x = self.fusion1(x, self.channel_proj(F.interpolate(p3, size=x.shape[-2:], mode='nearest')))
-        # 第一个注意力点
-        x = self.attention1(x)  # GOA or CBAM or identity
+            # c. 第一次融合与注意力
+            p3_proj = self.fpn_proj1(p3)  # 对齐通道: cs -> cs*2
+            x = self.fusion1(x, p3_proj)  # AFF 或 Add
+            x = self.attention1(x)  # GOA 或 CBAM
 
-        # 第二阶段：112x112 -> 224x224
-        x = F.relu(self.bn5(self.conv5(x)))
-        # FPN特征融合，第二个融合点
-        if self.use_fpn:
-            x = self.fusion2(x, F.interpolate(p2, size=x.shape[-2:], mode='nearest'))
-        # SPD特征融合
-        if self.use_spd:
-            x = self.fusion2(x, F.interpolate(spd_features, size=x.shape[-2:], mode='nearest'))
-        # 第二个注意力点
-        x = self.attention2(x)
+            # d. 第二次上采样
+            # x: (cs, 224, 224)
+            x = F.relu(self.bn5(self.conv5(x)))
 
-        # 特征细化
+            # e. 第二次融合与注意力
+            # e.1 准备所有待融合的特征
+            features_to_fuse = [x]
+            p2_proj = self.fpn_proj2(p2)  # 对齐通道 (可选，但保持一致性)
+            features_to_fuse.append(p2_proj)
+            if self.use_spd:
+                spd_features = self.spd(c1)  # (cs, 112, 112)
+                # 需要上采样以匹配尺寸
+                spd_features_up = F.interpolate(spd_features, size=x.shape[-2:], mode='bilinear', align_corners=True)
+                features_to_fuse.append(spd_features_up)
+
+            # e.2 依次进行融合
+            # 注意: 我们的融合模块 (AFF/Add) 设计为接收两个输入。
+            # 在这里进行链式融合
+            fused_x = features_to_fuse[0]
+            for feature in features_to_fuse[1:]:
+                fused_x = self.fusion2(fused_x, feature)
+            # 对最终融合的特征应用注意力
+            x = self.attention2(fused_x)
+
+        else:
+            # --- U-Net 模式路径 ---
+            # a. 第一次上采样
+            # x: (cs*2, 112, 112)
+            x = F.relu(self.bn4(self.conv4(c4)))
+
+            # b. 第一次跳跃连接与注意力
+            c2_proj = self.unet_proj1(c2)  # 对齐通道
+            x = self.fusion1(x, c2_proj)  # AFF 或 Add
+            x = self.attention1(x)  # GOA 或 CBAM
+
+            # c. 第二次上采样
+            # x: (cs, 224, 224)
+            x = F.relu(self.bn5(self.conv5(x)))
+
+            # d. 第二次跳跃连接与注意力
+            c1_proj = self.unet_proj2(c1)  # 对齐通道
+            x = self.fusion2(x, c1_proj)  # AFF 或 Add
+            x = self.attention2(x)  # GOA 或 CBAM
+
+        # 3. 最终卷积层，细化特征
         x = self.conv6(x)
 
-        # === 输出阶段 (与原网络一致) ===
+        # 4. 输出头，生成最终的抓取图
         if self.dropout:
             pos_output = self.pos_output(self.dropout_pos(x))
             cos_output = self.cos_output(self.dropout_cos(x))
@@ -532,10 +574,14 @@ if __name__ == "__main__":
     # 测试不同配置
     configs = {
         'baseline': {},
-        'mas': {'use_fpn': True, 'use_spd': True, 'use_cbam': True},
-        'goa_only': {'use_fpn': True, 'use_spd': True, 'use_goa': True},
-        'aff_only': {'use_fpn': True, 'use_spd': True, 'use_cbam': True, 'use_aff': True},
-        'full': {'use_fpn': True, 'use_spd': True, 'use_goa': True, 'use_aff': True}
+        'goa_only': {'use_goa': True},
+        'aff_only': {'use_aff': True},
+        'fpn_only': {'use_fpn': True},
+        'cbam_only': {'use_cbam': True},
+        'goa_aff': {'use_goa': True, 'use_aff': True},
+        'fpn_spd': {'use_fpn': True, 'use_spd': True},
+        'fpn_spd_cam': {'use_fpn': True, 'use_spd': True, 'use_cbam': True},
+        'fpn_goa': {'use_goa': True, 'use_goa': True},
     }
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

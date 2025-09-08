@@ -56,7 +56,7 @@ if __name__ == '__main__':
     try:
         while True:
             image_bundle = cam.get_image_bundle()
-            rgb_full = image_bundle['rgb_full']
+            rgb_full = image_bundle['rgb']
             depth_full = image_bundle['aligned_depth']
 
             # 原图裁剪+组合

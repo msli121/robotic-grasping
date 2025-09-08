@@ -36,6 +36,7 @@ python train_network.py --network grconvnet_goa --dataset jacquard --dataset-pat
 python train_network.py --network grconvnet_goa --dataset jacquard --dataset-path D:\\datasets\\Jacquard --description training_Jacquard --use-dropout 1 --input-size 300 --split 0.9 --fpn 1 --goa 1 --aff 1
 
 # ================Linux Cornell 数据集======================
+python train_network.py --dataset cornell --dataset-path /root/datasets/cornell_grasp --description training_cornell --input-size 224 --split 0.8
 
 # cornell baseline
 python train_network.py --network grconvnet_goa --dataset cornell --dataset-path /root/datasets/cornell_grasp --description training_cornell --input-size 224 --split 0.8 --use-dropout 1

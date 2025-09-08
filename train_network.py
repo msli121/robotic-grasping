@@ -59,7 +59,7 @@ def parse_args():
                         help='Dataset workers')
 
     # Training
-    parser.add_argument('--batch-size', type=int, default=8,
+    parser.add_argument('--batch-size', type=int, default=16,
                         help='Batch size')
     parser.add_argument('--epochs', type=int, default=50,
                         help='Training epochs')
@@ -190,51 +190,10 @@ def train(epoch, net, device, train_data, optimizer, batches_per_epoch, vis=Fals
 
     net.train()
 
-    # 使用tqdm来迭代训练数据，显示训练进度
-    with tqdm(total=batches_per_epoch, desc=f"Epoch {epoch + 1:02d}", leave=True) as pbar:
-        for batch_idx, (x, y, _, _, _) in enumerate(train_data):
-            # 控制每个epoch的批次数
-            if batch_idx >= batches_per_epoch:
-                break
-
-            xc = x.to(device)
-            yc = [yy.to(device) for yy in y]
-            lossd = net.compute_loss(xc, yc)
-
-            loss = lossd['loss']
-
-            results['loss'] += loss.item()
-            for ln, l in lossd['losses'].items():
-                results['losses'].setdefault(ln, 0)
-                results['losses'][ln] += l.item()
-
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-
-            # 更新tqdm进度条的后缀信息，显示实时loss
-            pbar.set_postfix(loss=f"{loss.item():.4f}")
-            pbar.update(1)
-
-            # Display the images
-            if vis:
-                imgs = []
-                n_img = min(4, x.shape[0])
-                for idx in range(n_img):
-                    imgs.extend([x[idx,].numpy().squeeze()] + [yi[idx,].numpy().squeeze() for yi in y] + [
-                        x[idx,].numpy().squeeze()] + [pc[idx,].detach().cpu().numpy().squeeze() for pc in
-                                                      lossd['pred'].values()])
-                gridshow('Display', imgs,
-                         [(xc.min().item(), xc.max().item()), (0.0, 1.0), (0.0, 1.0), (-1.0, 1.0),
-                          (0.0, 1.0)] * 2 * n_img,
-                         [cv2.COLORMAP_BONE] * 10 * n_img, 10)
-                cv2.waitKey(2)
-
-    # batch_idx = 0
-    # # Use batches per epoch to make training on different sized datasets (cornell/jacquard) more equivalent.
-    # while batch_idx <= batches_per_epoch:
-    #     for x, y, _, _, _ in train_data:
-    #         batch_idx += 1
+    # # 使用tqdm来迭代训练数据，显示训练进度
+    # with tqdm(total=batches_per_epoch, desc=f"Epoch {epoch + 1:02d}", leave=True) as pbar:
+    #     for batch_idx, (x, y, _, _, _) in enumerate(train_data):
+    #         # 控制每个epoch的批次数
     #         if batch_idx >= batches_per_epoch:
     #             break
     #
@@ -244,22 +203,18 @@ def train(epoch, net, device, train_data, optimizer, batches_per_epoch, vis=Fals
     #
     #         loss = lossd['loss']
     #
-    #         if batch_idx % 100 == 0:
-    #             losses = lossd['losses']
-    #             loss_str = ', '.join([f'{ln}: {l.item():0.4f}' for ln, l in losses.items()])
-    #             logging.info(
-    #                 'Epoch: {}, Batch: {}, Loss: {:0.4f} ====> Losses: {}'.format(epoch, batch_idx, loss.item(),
-    #                                                                               loss_str))
-    #
     #         results['loss'] += loss.item()
     #         for ln, l in lossd['losses'].items():
-    #             if ln not in results['losses']:
-    #                 results['losses'][ln] = 0
+    #             results['losses'].setdefault(ln, 0)
     #             results['losses'][ln] += l.item()
     #
     #         optimizer.zero_grad()
     #         loss.backward()
     #         optimizer.step()
+    #
+    #         # 更新tqdm进度条的后缀信息，显示实时loss
+    #         pbar.set_postfix(loss=f"{loss.item():.4f}")
+    #         pbar.update(1)
     #
     #         # Display the images
     #         if vis:
@@ -274,6 +229,51 @@ def train(epoch, net, device, train_data, optimizer, batches_per_epoch, vis=Fals
     #                       (0.0, 1.0)] * 2 * n_img,
     #                      [cv2.COLORMAP_BONE] * 10 * n_img, 10)
     #             cv2.waitKey(2)
+
+    batch_idx = 0
+    # Use batches per epoch to make training on different sized datasets (cornell/jacquard) more equivalent.
+    while batch_idx <= batches_per_epoch:
+        for x, y, _, _, _ in train_data:
+            batch_idx += 1
+            if batch_idx >= batches_per_epoch:
+                break
+
+            xc = x.to(device)
+            yc = [yy.to(device) for yy in y]
+            lossd = net.compute_loss(xc, yc)
+
+            loss = lossd['loss']
+
+            if batch_idx % 100 == 0:
+                losses = lossd['losses']
+                loss_str = ', '.join([f'{ln}: {l.item():0.4f}' for ln, l in losses.items()])
+                logging.info(
+                    'Epoch: {}, Batch: {}, Loss: {:0.4f} ====> Losses: {}'.format(epoch, batch_idx, loss.item(),
+                                                                                  loss_str))
+
+            results['loss'] += loss.item()
+            for ln, l in lossd['losses'].items():
+                if ln not in results['losses']:
+                    results['losses'][ln] = 0
+                results['losses'][ln] += l.item()
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            # Display the images
+            if vis:
+                imgs = []
+                n_img = min(4, x.shape[0])
+                for idx in range(n_img):
+                    imgs.extend([x[idx,].numpy().squeeze()] + [yi[idx,].numpy().squeeze() for yi in y] + [
+                        x[idx,].numpy().squeeze()] + [pc[idx,].detach().cpu().numpy().squeeze() for pc in
+                                                      lossd['pred'].values()])
+                gridshow('Display', imgs,
+                         [(xc.min().item(), xc.max().item()), (0.0, 1.0), (0.0, 1.0), (-1.0, 1.0),
+                          (0.0, 1.0)] * 2 * n_img,
+                         [cv2.COLORMAP_BONE] * 10 * n_img, 10)
+                cv2.waitKey(2)
 
     results['loss'] /= batch_idx
     for l in results['losses']:

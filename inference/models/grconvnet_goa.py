@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-grconvnet_goa.py.py - 基于GOA注意力机制的改进GR-ConvNet
+grconvnet_goa.py - 基于GOA注意力机制的改进GR-ConvNet
 
 完全兼容原框架，在原有代码基础上集成改进模块：
 1. 保持与原始 GR-ConvNet 完全兼容

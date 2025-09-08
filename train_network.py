@@ -12,6 +12,8 @@ import torch
 import torch.optim as optim
 import torch.utils.data
 from torchsummary import summary
+from torch.optim.lr_scheduler import ReduceLROnPlateau
+from tqdm import tqdm
 
 from hardware.device import get_device
 from inference.models import get_network
@@ -63,8 +65,8 @@ def parse_args():
                         help='Training epochs')
     parser.add_argument('--batches-per-epoch', type=int, default=1000,
                         help='Batches per Epoch')
-    parser.add_argument('--optim', type=str, default='adam',
-                        help='Optmizer for the training. (adam or SGD)')
+    parser.add_argument('--optim', type=str, default='adamw',
+                        help='Optmizer for the training. (adamw or adam or SGD)')
 
     # Logging etc.
     parser.add_argument('--description', type=str, default='',
@@ -93,6 +95,19 @@ def parse_args():
                         help='Use SPDConv for training (1/0)')
     parser.add_argument('--spd-scale', type=int, default=2,
                         help='SPDConv scale for training (2/3/4)')
+
+    # ============================================================================
+    # --- 新增的训练策略参数 ---
+    # ============================================================================
+    parser.add_argument('--lr', type=float, default=1e-3,
+                        help='Initial learning rate')
+    parser.add_argument('--weight-decay', type=float, default=1e-4,
+                        help='Weight decay for AdamW optimizer')
+    parser.add_argument('--lr-patience', type=int, default=5,
+                        help='Patience for learning rate scheduler (epochs)')
+    parser.add_argument('--early-stop-patience', type=int, default=20,
+                        help='Patience for early stopping (epochs)')
+    # ============================================================================
 
     args = parser.parse_args()
     return args
@@ -173,11 +188,10 @@ def train(epoch, net, device, train_data, optimizer, batches_per_epoch, vis=Fals
 
     net.train()
 
-    batch_idx = 0
-    # Use batches per epoch to make training on different sized datasets (cornell/jacquard) more equivalent.
-    while batch_idx <= batches_per_epoch:
-        for x, y, _, _, _ in train_data:
-            batch_idx += 1
+    # 使用tqdm来迭代训练数据，显示训练进度
+    with tqdm(total=batches_per_epoch, desc=f"Epoch {epoch + 1:02d}", leave=True) as pbar:
+        for batch_idx, (x, y, _, _, _) in enumerate(train_data):
+            # 控制每个epoch的批次数
             if batch_idx >= batches_per_epoch:
                 break
 
@@ -187,22 +201,21 @@ def train(epoch, net, device, train_data, optimizer, batches_per_epoch, vis=Fals
 
             loss = lossd['loss']
 
-            if batch_idx % 100 == 0:
-                losses = lossd['losses']
-                loss_str = ', '.join([f'{ln}: {l.item():0.4f}' for ln, l in losses.items()])
-                logging.info(
-                    'Epoch: {}, Batch: {}, Loss: {:0.4f} ====> Losses: {}'.format(epoch, batch_idx, loss.item(),
-                                                                                  loss_str))
+            # --- 移除旧的日志打印 ---
+            # if batch_idx % 100 == 0: ...
 
             results['loss'] += loss.item()
             for ln, l in lossd['losses'].items():
-                if ln not in results['losses']:
-                    results['losses'][ln] = 0
+                results['losses'].setdefault(ln, 0)
                 results['losses'][ln] += l.item()
 
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+
+            # 更新tqdm进度条的后缀信息，显示实时loss
+            pbar.set_postfix(loss=f"{loss.item():.4f}")
+            pbar.update(1)
 
             # Display the images
             if vis:
@@ -217,6 +230,51 @@ def train(epoch, net, device, train_data, optimizer, batches_per_epoch, vis=Fals
                           (0.0, 1.0)] * 2 * n_img,
                          [cv2.COLORMAP_BONE] * 10 * n_img, 10)
                 cv2.waitKey(2)
+
+    # batch_idx = 0
+    # # Use batches per epoch to make training on different sized datasets (cornell/jacquard) more equivalent.
+    # while batch_idx <= batches_per_epoch:
+    #     for x, y, _, _, _ in train_data:
+    #         batch_idx += 1
+    #         if batch_idx >= batches_per_epoch:
+    #             break
+    #
+    #         xc = x.to(device)
+    #         yc = [yy.to(device) for yy in y]
+    #         lossd = net.compute_loss(xc, yc)
+    #
+    #         loss = lossd['loss']
+    #
+    #         if batch_idx % 100 == 0:
+    #             losses = lossd['losses']
+    #             loss_str = ', '.join([f'{ln}: {l.item():0.4f}' for ln, l in losses.items()])
+    #             logging.info(
+    #                 'Epoch: {}, Batch: {}, Loss: {:0.4f} ====> Losses: {}'.format(epoch, batch_idx, loss.item(),
+    #                                                                               loss_str))
+    #
+    #         results['loss'] += loss.item()
+    #         for ln, l in lossd['losses'].items():
+    #             if ln not in results['losses']:
+    #                 results['losses'][ln] = 0
+    #             results['losses'][ln] += l.item()
+    #
+    #         optimizer.zero_grad()
+    #         loss.backward()
+    #         optimizer.step()
+    #
+    #         # Display the images
+    #         if vis:
+    #             imgs = []
+    #             n_img = min(4, x.shape[0])
+    #             for idx in range(n_img):
+    #                 imgs.extend([x[idx,].numpy().squeeze()] + [yi[idx,].numpy().squeeze() for yi in y] + [
+    #                     x[idx,].numpy().squeeze()] + [pc[idx,].detach().cpu().numpy().squeeze() for pc in
+    #                                                   lossd['pred'].values()])
+    #             gridshow('Display', imgs,
+    #                      [(xc.min().item(), xc.max().item()), (0.0, 1.0), (0.0, 1.0), (-1.0, 1.0),
+    #                       (0.0, 1.0)] * 2 * n_img,
+    #                      [cv2.COLORMAP_BONE] * 10 * n_img, 10)
+    #             cv2.waitKey(2)
 
     results['loss'] /= batch_idx
     for l in results['losses']:
@@ -333,12 +391,20 @@ def run():
     )
     logging.info('Done')
 
-    if args.optim.lower() == 'adam':
+    if args.optim.lower() == 'adamw':
+        logging.info(f"Using AdamW Optimizer with lr={args.lr} and weight_decay={args.weight_decay}")
+        optimizer = optim.AdamW(net.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    elif args.optim.lower() == 'adam':
         optimizer = optim.Adam(net.parameters())
     elif args.optim.lower() == 'sgd':
         optimizer = optim.SGD(net.parameters(), lr=0.01, momentum=0.9)
     else:
         raise NotImplementedError('Optimizer {} is not implemented'.format(args.optim))
+
+    # 添加学习率调度器 ---
+    logging.info(f"Using ReduceLROnPlateau scheduler with patience={args.lr_patience}")
+    # 我们要最大化IOU, 所以 mode='max'
+    scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=0.1, patience=args.lr_patience, verbose=True)
 
     # Print model architecture.
     summary(net, (input_channels, args.input_size, args.input_size))
@@ -348,21 +414,26 @@ def run():
     sys.stdout = sys.__stdout__
     f.close()
 
+    # 初始化提前停止的变量
     best_iou = 0.0
+    patience_counter = 0
     for epoch in range(args.epochs):
-        logging.info('Beginning Epoch {:02d}'.format(epoch))
+        # logging.info('Beginning Epoch {:02d}'.format(epoch))
         train_results = train(epoch, net, device, train_data, optimizer, args.batches_per_epoch, vis=args.vis)
 
         # Log training losses to tensorboard
         tb.add_scalar('loss/train_loss', train_results['loss'], epoch)
         for n, l in train_results['losses'].items():
             tb.add_scalar('train_loss/' + n, l, epoch)
+        # 记录当前学习率
+        tb.add_scalar('learning_rate', optimizer.param_groups[0]['lr'], epoch)
 
         # Run Validation
         logging.info('Validating...')
         test_results = validate(net, device, val_data, args.iou_threshold)
-        logging.info('%d/%d = %f' % (test_results['correct'], test_results['correct'] + test_results['failed'],
-                                     test_results['correct'] / (test_results['correct'] + test_results['failed'])))
+        iou = test_results['correct'] / (test_results['correct'] + test_results['failed'])
+        logging.info('Validation Result: %d/%d = %f' % (
+            test_results['correct'], test_results['correct'] + test_results['failed'], iou))
 
         # Log validation results to tensorbaord
         tb.add_scalar('loss/IOU', test_results['correct'] / (test_results['correct'] + test_results['failed']), epoch)
@@ -370,18 +441,33 @@ def run():
         for n, l in test_results['losses'].items():
             tb.add_scalar('val_loss/' + n, l, epoch)
 
-        # Save best performing network
-        iou = test_results['correct'] / (test_results['correct'] + test_results['failed'])
+        # 更新调度器
+        scheduler.step(iou)
+
+        # 保存最佳模型
         if iou > best_iou:
-            # 遍历save_folder， 删除已有的best文件
+            logging.info(f" >> IOU improved from {best_iou:.4f} to {iou:.4f}. Saving best model...")
+            best_iou = iou
+            # 删除旧的 best 模型
             for f in os.listdir(save_folder):
-                if f.startswith('best_iou'):
+                if f.startswith('best_model'):
                     os.remove(os.path.join(save_folder, f))
-            torch.save(net, os.path.join(save_folder, 'best_iou_epoch_%02d_iou_%0.4f' % (epoch, iou)))
-        if iou > best_iou or epoch == 0 or (epoch % 10) == 0:
-            torch.save(net, os.path.join(save_folder, 'epoch_%02d_iou_%0.4f' % (epoch, iou)))
-            if iou > best_iou:
-                best_iou = iou
+            # 保存 state_dict 是更好的实践
+            torch.save(net.state_dict(),
+                       os.path.join(save_folder, f'best_model_epoch_{epoch + 1:02d}_iou_{iou:.4f}.pth'))
+            patience_counter = 0  # 只要有进步，耐心就重置
+        else:
+            patience_counter += 1
+
+        # 保存周期性 checkpoint (可选)
+        if epoch % 10 == 0:
+            torch.save(net.state_dict(),
+                       os.path.join(save_folder, f'checkpoint_epoch_{epoch + 1:02d}_iou_{iou:.4f}.pth'))
+
+        # 检查是否需要提前停止
+        if patience_counter >= args.early_stop_patience:
+            logging.info(f"Early stopping triggered after {patience_counter} epochs with no improvement.")
+            break
 
 
 if __name__ == '__main__':
@@ -424,5 +510,5 @@ if __name__ == '__main__':
     # 6. only aff
     # python train_network.py --network grconvnet_goa --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell --use-dropout 1 --input-size 300 --split 0.8 --aff 1
     # 7. goa + aff
-    # python train_network.py --network grconvnet_goa --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell --use-dropout 1 --input-size 300 --split 0.8 --goa 1 --aff 1
+    # python train_network.py --network grconvnet_goa --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell --use-dropout 1 --dropout-prob --input-size 300 --split 0.8 --goa 1 --aff 1
     run()

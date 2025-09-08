@@ -1,10 +1,6 @@
-# baseline cornell
-python train_network.py --network grconvnet3 --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell_grconvnet3 --use-dropout 1 --input-size 224 --split 0.8
+# ================Windows Cornell 数据集======================
 
-# baseline jacquard
-python train_network.py --network grconvnet3 --dataset jacquard --dataset-path D:\\datasets\\Jacquard --description training_Jacquard_grconvnet3 --use-dropout 1 --input-size 224 --split 0.9
-
-# cornell 基线
+# cornell baseline
 python train_network.py --network grconvnet_goa --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell --use-dropout 1 --input-size 300 --split 0.8
 
 # cornell only goa
@@ -15,6 +11,11 @@ python train_network.py --network grconvnet_goa --dataset cornell --dataset-path
 
 # cornell goa + aff
 python train_network.py --network grconvnet_goa --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell --use-dropout 1 --input-size 300 --split 0.8 --goa 1 --aff 1
+
+# ================Windows Jacquard 数据集======================
+
+# jacquard baseline
+python train_network.py --network grconvnet_goa --dataset jacquard --dataset-path D:\\datasets\\Jacquard --description training_Jacquard --use-dropout 1 --input-size 300 --split 0.9
 
 # jacquard unet
 python train_network.py --network grconvnet_goa --dataset jacquard --dataset-path D:\\datasets\\Jacquard --description training_Jacquard --use-dropout 1 --input-size 300 --split 0.9 --unet 1
@@ -33,3 +34,26 @@ python train_network.py --network grconvnet_goa --dataset jacquard --dataset-pat
 
 # jacquard FPN + GOA + AFF
 python train_network.py --network grconvnet_goa --dataset jacquard --dataset-path D:\\datasets\\Jacquard --description training_Jacquard --use-dropout 1 --input-size 300 --split 0.9 --fpn 1 --goa 1 --aff 1
+
+# ================Linux Cornell 数据集======================
+
+# cornell baseline
+python train_network.py --network grconvnet_goa --dataset cornell --dataset-path /root/datasets/cornell_grasp --description training_cornell --input-size 224 --split 0.8 --use-dropout 1
+# cornell upconv
+python train_network.py --network grconvnet_goa --dataset cornell --dataset-path /root/datasets/cornell_grasp --description training_cornell --input-size 224 --split 0.8 --use-dropout 1 --upconv 1
+# cornell unet
+python train_network.py --network grconvnet_goa --dataset cornell --dataset-path /root/datasets/cornell_grasp --description training_cornell --input-size 224 --split 0.8 --use-dropout 1 --unet 1
+# cornell goa
+python train_network.py --network grconvnet_goa --dataset cornell --dataset-path /root/datasets/cornell_grasp --description training_cornell --input-size 224 --split 0.8 --use-dropout 1 --goa 1
+# cornell aff
+python train_network.py --network grconvnet_goa --dataset cornell --dataset-path /root/datasets/cornell_grasp --description training_cornell --input-size 224 --split 0.8 --use-dropout 1 --aff 1
+# cornell upconv + unet
+python train_network.py --network grconvnet_goa --dataset cornell --dataset-path /root/datasets/cornell_grasp --description training_cornell --input-size 224 --split 0.8 --use-dropout 1 --upconv 1 --unet 1
+# cornell upconv + unet + goa
+python train_network.py --network grconvnet_goa --dataset cornell --dataset-path /root/datasets/cornell_grasp --description training_cornell --input-size 224 --split 0.8 --use-dropout 1 --upconv 1 --unet 1 --goa 1
+# cornell upconv + unet + goa + aff
+python train_network.py --network grconvnet_goa --dataset cornell --dataset-path /root/datasets/cornell_grasp --description training_cornell --input-size 224 --split 0.8 --use-dropout 1 --upconv 1 --unet 1 --goa 1 --aff 1
+
+# ================Linux Jacquard 数据集======================
+
+

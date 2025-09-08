@@ -132,7 +132,7 @@ class Calibration:
             checkerboard_size = (3, 3)
             refine_criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
             image_bundle = self.camera.get_image_bundle()
-            camera_color_img = image_bundle['rgb_full']
+            camera_color_img = image_bundle['rgb']
             camera_depth_img = image_bundle['aligned_depth']
             bgr_color_data = cv2.cvtColor(camera_color_img, cv2.COLOR_RGB2BGR)
             gray_data = cv2.cvtColor(bgr_color_data, cv2.COLOR_RGB2GRAY)

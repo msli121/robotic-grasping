@@ -38,7 +38,7 @@ class CameraHandler:
             return self.get_default_frame()
         try:
             info = self.camera.get_image_bundle()
-            rgb = info['rgb_full']
+            rgb = info['rgb']
             depth = info['aligned_depth']
             return rgb, depth
         except Exception as e:

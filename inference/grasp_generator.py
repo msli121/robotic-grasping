@@ -27,7 +27,7 @@ class GraspGenerator:
         # Connect to camera
         self.camera.connect()
 
-        # Load camera pose and depth_full scale (from running calibration)
+        # Load camera pose and depth scale (from running calibration)
         self.cam_pose = np.loadtxt('saved_data/camera_pose.txt', delimiter=' ')
         self.cam_depth_scale = np.loadtxt('saved_data/camera_depth_scale.txt', delimiter=' ')
 
@@ -50,7 +50,7 @@ class GraspGenerator:
     def generate(self):
         # Get RGB-D image from camera
         image_bundle = self.camera.get_image_bundle()
-        rgb = image_bundle['rgb_full']
+        rgb = image_bundle['rgb']
         depth = image_bundle['aligned_depth']
         x, depth_img, rgb_img = self.cam_data.get_data(rgb=rgb, depth=depth)
 

@@ -14,7 +14,7 @@ class GraspDatasetBase(torch.utils.data.Dataset):
                  random_zoom=False, input_only=False):
         """
         :param output_size: Image output size in pixels (square)
-        :param include_depth: Whether depth_full image is included
+        :param include_depth: Whether depth image is included
         :param include_rgb: Whether RGB image is included
         :param random_rotate: Whether random rotations are applied
         :param random_zoom: Whether random zooms are applied
@@ -60,7 +60,7 @@ class GraspDatasetBase(torch.utils.data.Dataset):
         else:
             zoom_factor = 1.0
 
-        # Load the depth_full image
+        # Load the depth image
         if self.include_depth:
             depth_img = self.get_depth(idx, rot, zoom_factor)
 

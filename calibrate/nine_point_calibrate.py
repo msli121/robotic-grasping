@@ -744,7 +744,7 @@ def verify_calibration_by_realsense_camera(data_save_dir=None, move_robot=False)
     def on_mouse(event, x, y, flags, param):
         if event == cv2.EVENT_LBUTTONDOWN:
             # 获取参数
-            rgb = param['rgb_full']
+            rgb = param['rgb']
             depth = param['aligned_depth']
             height, width = rgb.shape[:2]
 
@@ -796,7 +796,7 @@ def verify_calibration_by_realsense_camera(data_save_dir=None, move_robot=False)
             # 记录结果
             measurement_results.append({
                 "pixel": (x, y),
-                "depth_full": depth_value,
+                "depth": depth_value,
                 "camera_coords": (camera_xyz[0], camera_xyz[1], camera_xyz[2]),
                 "base_coords": (robot_base_xyz[0], robot_base_xyz[1], robot_base_xyz[2]),
                 "depth_origin": depth_value,
@@ -822,12 +822,12 @@ def verify_calibration_by_realsense_camera(data_save_dir=None, move_robot=False)
         while True:
             # 获取图像
             images = camera.get_image_bundle()
-            if not images or 'rgb_full' not in images or 'aligned_depth' not in images:
+            if not images or 'rgb' not in images or 'aligned_depth' not in images:
                 print("获取图像失败，重试...")
                 continue
 
             # 转换色彩空间以适应OpenCV显示
-            rgb = cv2.cvtColor(images['rgb_full'], cv2.COLOR_RGB2BGR)
+            rgb = cv2.cvtColor(images['rgb'], cv2.COLOR_RGB2BGR)
             depth = images['aligned_depth']
 
             # 显示操作提示
@@ -837,7 +837,7 @@ def verify_calibration_by_realsense_camera(data_save_dir=None, move_robot=False)
             # 显示窗口并绑定鼠标事件
             cv2.imshow('VerifyCalibration', rgb)
             cv2.setMouseCallback('VerifyCalibration',
-                                 on_mouse, param={'rgb_full': rgb, 'aligned_depth': depth})
+                                 on_mouse, param={'rgb': rgb, 'aligned_depth': depth})
 
             # 处理键盘事件
             key = cv2.waitKey(1) & 0xFF
@@ -849,7 +849,7 @@ def verify_calibration_by_realsense_camera(data_save_dir=None, move_robot=False)
                     for i, res in enumerate(measurement_results, 1):
                         f.write(f"测量点 {i}:\n")
                         f.write(f"  像素坐标: {res['pixel']}\n")
-                        f.write(f"  深度值: {res['depth_full']:.4f}m\n")
+                        f.write(f"  深度值: {res['depth']:.4f}m\n")
                         f.write(f"  相机坐标: {res['camera_coords']}\n")
                         f.write(f"  基座坐标: {res['base_coords']}\n")
                         f.write(f"  深度值(未缩放): {res['depth_origin']:.4f}m\n")
@@ -878,7 +878,7 @@ def verify_calibration_by_realsense_camera(data_save_dir=None, move_robot=False)
                 for i, res in enumerate(measurement_results, 1):
                     f.write(f"测量点 {i}:\n")
                     f.write(f"  像素坐标: {res['pixel']}\n")
-                    f.write(f"  深度值: {res['depth_full']:.4f}m\n")
+                    f.write(f"  深度值: {res['depth']:.4f}m\n")
                     f.write(f"  相机坐标: {res['camera_coords']}\n")
                     f.write(f"  基座坐标: {res['base_coords']}\n")
                     f.write(f"  深度值(未缩放): {res['depth_origin']:.4f}m\n")

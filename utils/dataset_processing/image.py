@@ -132,7 +132,7 @@ class DepthImage(Image):
     @classmethod
     def from_pcd(cls, pcd_filename, shape, default_filler=0, index=None):
         """
-            Create a depth_full image from an unstructured PCD file.
+            Create a depth image from an unstructured PCD file.
             If index isn't specified, use euclidean distance, otherwise choose x/y/z=0/1/2
         """
         img = np.zeros(shape)
@@ -174,8 +174,8 @@ class DepthImage(Image):
 
     def inpaint(self, missing_value=0):
         """
-        Inpaint missing values in depth_full image.
-        :param missing_value: Value to fill in teh depth_full image.
+        Inpaint missing values in depth image.
+        :param missing_value: Value to fill in teh depth image.
         """
         # cv2 inpainting doesn't handle the border properly
         # https://stackoverflow.com/questions/25974033/inpainting-depth-map-still-a-black-image-border
@@ -193,7 +193,7 @@ class DepthImage(Image):
 
     def gradients(self):
         """
-        Compute gradients of the depth_full image using Sobel filtesr.
+        Compute gradients of the depth image using Sobel filtesr.
         :return: Gradients in X direction, Gradients in Y diretion, Magnitude of XY gradients.
         """
         grad_x = cv2.Sobel(self.img, cv2.CV_64F, 1, 0, borderType=cv2.BORDER_DEFAULT)

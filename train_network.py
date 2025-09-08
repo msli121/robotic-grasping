@@ -31,9 +31,9 @@ def parse_args():
                         help='Network name in inference/models')
     parser.add_argument('--input-size', type=int, default=224,
                         help='Input image size for the network')
-    parser.add_argument('--use-depth_full', type=int, default=1,
+    parser.add_argument('--use-depth', type=int, default=1,
                         help='Use Depth image for training (1/0)')
-    parser.add_argument('--use-rgb_full', type=int, default=1,
+    parser.add_argument('--use-rgb', type=int, default=1,
                         help='Use RGB image for training (1/0)')
     parser.add_argument('--use-dropout', type=int, default=1,
                         help='Use dropout for training (1/0)')
@@ -81,6 +81,8 @@ def parse_args():
                         help='Random seed for numpy')
 
     # 优化后的网络grconvnet_mas的参数配置
+    parser.add_argument('--upconv', type=int, default=0,
+                        help='Use upconv for training (1/0)')
     parser.add_argument('--unet', type=int, default=0,
                         help='Use UNet for training (1/0)')
     parser.add_argument('--fpn', type=int, default=0,
@@ -297,6 +299,7 @@ def run():
             dropout=bool(args.use_dropout),  # 是否使用dropout
             prob=args.dropout_prob,  # dropout概率
             channel_size=args.channel_size,  # 通道数
+            use_upconv=bool(args.upconv),  # 是否使用上采样卷积
             use_unet=bool(args.unet),  # 是否使用UNet
             use_fpn=bool(args.fpn),  # 是否使用FPN
             use_cbam=bool(args.cbam),  # 是否使用CBAM

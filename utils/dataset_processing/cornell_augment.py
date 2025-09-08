@@ -15,8 +15,8 @@
 #     :param total_samples: 生成总样本数
 #     """
 #     os.makedirs(output_dir, exist_ok=True)
-#     os.makedirs(os.path.join(output_dir, 'rgb_full'), exist_ok=True)
-#     os.makedirs(os.path.join(output_dir, 'depth_full'), exist_ok=True)
+#     os.makedirs(os.path.join(output_dir, 'rgb'), exist_ok=True)
+#     os.makedirs(os.path.join(output_dir, 'depth'), exist_ok=True)
 #     os.makedirs(os.path.join(output_dir, 'pos_label'), exist_ok=True)
 #
 #     # 收集原始 RGB 文件列表
@@ -55,8 +55,8 @@
 #         pos_img, cos_img, sin_img, width_img = gtbbs.draw(output_size)
 #
 #         # 保存
-#         cv2.imwrite(os.path.join(output_dir, 'rgb_full', f'{i:05d}.png'), rgb_img)
-#         np.save(os.path.join(output_dir, 'depth_full', f'{i:05d}.npy'), depth_img)
+#         cv2.imwrite(os.path.join(output_dir, 'rgb', f'{i:05d}.png'), rgb_img)
+#         np.save(os.path.join(output_dir, 'depth', f'{i:05d}.npy'), depth_img)
 #         np.savez_compressed(os.path.join(output_dir, 'pos_label', f'{i:05d}.npz'),
 #                             pos=pos_img, cos=cos_img, sin=sin_img, width=width_img)
 #

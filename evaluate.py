@@ -30,9 +30,9 @@ def parse_args():
                         help='Dataset Name ("cornell" or "jaquard")')
     parser.add_argument('--dataset-path', type=str,
                         help='Path to dataset')
-    parser.add_argument('--use-depth_full', type=int, default=1,
+    parser.add_argument('--use-depth', type=int, default=1,
                         help='Use Depth image for evaluation (1/0)')
-    parser.add_argument('--use-rgb_full', type=int, default=1,
+    parser.add_argument('--use-rgb', type=int, default=1,
                         help='Use RGB image for evaluation (1/0)')
     parser.add_argument('--augment', action='store_true',
                         help='Whether data augmentation should be applied')

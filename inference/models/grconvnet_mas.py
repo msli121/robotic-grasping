@@ -55,7 +55,7 @@ class GRConvNetMAS(GraspModel):
         self.use_cbam = use_cbam
         self.use_spd = use_spd
         if use_spd:
-            # 对浅层 c1(224x224) 做 space-to-depth_full 增强
+            # 对浅层 c1(224x224) 做 space-to-depth 增强
             self.spd = SPDConv(cs, scale=spd_scale, out_ch=cs)
 
         # ========= 解码器（严格 2× 上采样，确保 56->112->224） =========

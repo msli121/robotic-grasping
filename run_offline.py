@@ -22,9 +22,9 @@ def parse_args():
                         help='RGB Image path')
     parser.add_argument('--depth_path', type=str, default='cornell/08/pcd0845d.tiff',
                         help='Depth Image path')
-    parser.add_argument('--use-depth_full', type=int, default=1,
+    parser.add_argument('--use-depth', type=int, default=1,
                         help='Use Depth image for evaluation (1/0)')
-    parser.add_argument('--use-rgb_full', type=int, default=1,
+    parser.add_argument('--use-rgb', type=int, default=1,
                         help='Use RGB image for evaluation (1/0)')
     parser.add_argument('--n-grasps', type=int, default=1,
                         help='Number of grasps to consider per image')

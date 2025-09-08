@@ -56,11 +56,11 @@ if __name__ == '__main__':
     try:
         while True:
             image_bundle = cam.get_image_bundle()
-            rgb_full = image_bundle['rgb']
-            depth_full = image_bundle['aligned_depth']
+            rgb = image_bundle['rgb']
+            depth = image_bundle['aligned_depth']
 
             # 原图裁剪+组合
-            x, depth_img, rgb_img = cam_data.get_data(rgb=rgb_full, depth=depth_full)
+            x, depth_img, rgb_img = cam_data.get_data(rgb=rgb, depth=depth)
 
             with torch.no_grad():
                 xc = x.to(device)
@@ -74,7 +74,7 @@ if __name__ == '__main__':
                     continue
 
                 # 原图
-                display_img = cv2.cvtColor(rgb_full.copy(), cv2.COLOR_RGB2BGR)
+                display_img = cv2.cvtColor(rgb.copy(), cv2.COLOR_RGB2BGR)
                 # 获取裁剪区域在原始全尺寸图像中的左上角偏移量 (y, x)
                 top_left_offset = cam_data.top_left
                 offset_x, offset_y = top_left_offset[1], top_left_offset[0]  # (x, y) 格式

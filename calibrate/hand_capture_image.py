@@ -246,7 +246,7 @@ class VisionRobotSystem:
                 try:
                     # 获取相机图像数据
                     image_bundle = self.camera.get_image_bundle()
-                    self.rgb_image = image_bundle['rgb']  # RGB格式（适合显示）
+                    self.rgb_image = image_bundle['rgb_full']  # RGB格式（适合显示）
                     self.depth_image = image_bundle['aligned_depth']  # 深度数据（单位：米）
 
                     # 处理RGB图像：根据角点检测状态决定是否显示角点

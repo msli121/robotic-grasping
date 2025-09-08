@@ -21,9 +21,9 @@ def parse_args():
     # default_net_path = r'D:\PycharmProjects\robotic-grasping\trained-models\cornell-randsplit-rgbd-grconvnet3-drop1-ch32\epoch_19_iou_0.98'
     parser.add_argument('--network', type=str, default=default_net_path,
                         help='Path to saved network to evaluate')
-    parser.add_argument('--use-depth', type=int, default=1,
+    parser.add_argument('--use-depth_full', type=int, default=1,
                         help='Use Depth image for evaluation (1/0)')
-    parser.add_argument('--use-rgb', type=int, default=1,
+    parser.add_argument('--use-rgb_full', type=int, default=1,
                         help='Use RGB image for evaluation (1/0)')
     parser.add_argument('--n-grasps', type=int, default=1,
                         help='Number of grasps to consider per image')
@@ -55,7 +55,7 @@ if __name__ == '__main__':
         fig = plt.figure(figsize=(10, 10))
         while True:
             image_bundle = cam.get_image_bundle()
-            rgb = image_bundle['rgb']
+            rgb = image_bundle['rgb_full']
             depth = image_bundle['aligned_depth']
             x, depth_img, rgb_img = cam_data.get_data(rgb=rgb, depth=depth)
             with torch.no_grad():

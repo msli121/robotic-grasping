@@ -7,7 +7,7 @@ import torch.nn as nn
 
 
 class SPDConv(nn.Module):
-    """ space-to-depth → 1x1 conv，用于浅层高频/小目标增强 """
+    """ space-to-depth_full → 1x1 conv，用于浅层高频/小目标增强 """
 
     def __init__(self, in_ch, scale=2, out_ch=None):
         super().__init__()

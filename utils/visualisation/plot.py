@@ -136,7 +136,7 @@ def save_results(rgb_img, grasp_q_img, grasp_angle_img, depth_img=None, no_grasp
     ax.imshow(rgb_img)
     ax.set_title('RGB')
     ax.axis('off')
-    fig.savefig('results/rgb.png')
+    fig.savefig('results/rgb_full.png')
 
     if depth_img.any():
         fig = plt.figure(figsize=(10, 10))
@@ -148,7 +148,7 @@ def save_results(rgb_img, grasp_q_img, grasp_angle_img, depth_img=None, no_grasp
             g.plot(ax)
         ax.set_title('Depth')
         ax.axis('off')
-        fig.savefig('results/depth.png')
+        fig.savefig('results/depth_full.png')
 
     fig = plt.figure(figsize=(10, 10))
     plt.ion()

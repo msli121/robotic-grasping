@@ -115,7 +115,7 @@ class MainWindow(QMainWindow):
         self.backend_thread.finished.connect(self.backend_thread.deleteLater)
         print("All signal-slot connections established.")
 
-    # --- 私有槽函数, 负责接收后端数据并更新UI ---
+    # --- 负责接收后端数据并更新UI ---
     @pyqtSlot(object)
     def _update_main_image(self, frame):
         """

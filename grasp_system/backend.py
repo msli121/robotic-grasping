@@ -161,7 +161,6 @@ class SystemBackend(QObject):
             else:
                 self.log_signal.emit(UILogger.success("手眼标定矩阵加载成功"))
 
-    # ... (所有其他的 connect/disconnect, process_instruction 等槽函数也完全无需改动)
     @pyqtSlot()
     def disconnect_camera(self):
         self.camera.disconnect();

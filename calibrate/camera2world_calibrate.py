@@ -384,7 +384,7 @@ class Camera2WorldCalibrate:
             checkerboard_size = (8, 8)
             refine_criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
             image_bundle = self.camera.get_image_bundle()
-            camera_color_img = image_bundle['rgb']
+            camera_color_img = image_bundle['rgb_full']
             camera_depth_img = image_bundle['aligned_depth']
 
             bgr_color_data = cv2.cvtColor(camera_color_img, cv2.COLOR_RGB2BGR)
@@ -612,7 +612,7 @@ class Camera2WorldCalibrate:
         def on_mouse(event, x, y, flags, param):
             if event == cv2.EVENT_LBUTTONDOWN:
                 # 获取参数
-                rgb = param['rgb']
+                rgb = param['rgb_full']
                 depth = param['aligned_depth']
                 height, width = rgb.shape[:2]
 
@@ -660,7 +660,7 @@ class Camera2WorldCalibrate:
                 # 记录结果
                 measurement_results.append({
                     "pixel": (x, y),
-                    "depth": depth_value,
+                    "depth_full": depth_value,
                     "camera_coords": (camera_xyz[0], camera_xyz[1], camera_xyz[2]),
                     "base_coords": (robot_base_xyz[0], robot_base_xyz[1], robot_base_xyz[2]),
                     "depth_origin": depth_value,
@@ -686,12 +686,12 @@ class Camera2WorldCalibrate:
             while True:
                 # 获取图像
                 images = self.camera.get_image_bundle()
-                if not images or 'rgb' not in images or 'aligned_depth' not in images:
+                if not images or 'rgb_full' not in images or 'aligned_depth' not in images:
                     print("获取图像失败，重试...")
                     continue
 
                 # 转换色彩空间以适应OpenCV显示
-                rgb = cv2.cvtColor(images['rgb'], cv2.COLOR_RGB2BGR)
+                rgb = cv2.cvtColor(images['rgb_full'], cv2.COLOR_RGB2BGR)
                 depth = images['aligned_depth']
 
                 # 显示操作提示
@@ -701,7 +701,7 @@ class Camera2WorldCalibrate:
                 # 显示窗口并绑定鼠标事件
                 cv2.imshow('VerifyCalibration', rgb)
                 cv2.setMouseCallback('VerifyCalibration',
-                                     on_mouse, param={'rgb': rgb, 'aligned_depth': depth})
+                                     on_mouse, param={'rgb_full': rgb, 'aligned_depth': depth})
 
                 # 处理键盘事件
                 key = cv2.waitKey(1) & 0xFF
@@ -713,7 +713,7 @@ class Camera2WorldCalibrate:
                         for i, res in enumerate(measurement_results, 1):
                             f.write(f"测量点 {i}:\n")
                             f.write(f"  像素坐标: {res['pixel']}\n")
-                            f.write(f"  深度值: {res['depth']:.4f}m\n")
+                            f.write(f"  深度值: {res['depth_full']:.4f}m\n")
                             f.write(f"  相机坐标: {res['camera_coords']}\n")
                             f.write(f"  基座坐标: {res['base_coords']}\n")
                             f.write(f"  深度值(未缩放): {res['depth_origin']:.4f}m\n")
@@ -742,7 +742,7 @@ class Camera2WorldCalibrate:
                     for i, res in enumerate(measurement_results, 1):
                         f.write(f"测量点 {i}:\n")
                         f.write(f"  像素坐标: {res['pixel']}\n")
-                        f.write(f"  深度值: {res['depth']:.4f}m\n")
+                        f.write(f"  深度值: {res['depth_full']:.4f}m\n")
                         f.write(f"  相机坐标: {res['camera_coords']}\n")
                         f.write(f"  基座坐标: {res['base_coords']}\n")
                         f.write(f"  深度值(未缩放): {res['depth_origin']:.4f}m\n")
@@ -786,7 +786,7 @@ class Camera2WorldCalibrate:
 
         while True:
             image_bundle = self.camera.get_image_bundle()
-            camera_color_img = image_bundle['rgb']
+            camera_color_img = image_bundle['rgb_full']
             camera_depth_img = image_bundle['aligned_depth']
             depth_max = camera_depth_img.max()
             if depth_max < 1:

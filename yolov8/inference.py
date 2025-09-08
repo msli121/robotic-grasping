@@ -177,7 +177,7 @@ class InferenceApp:
         while self.is_running:
             try:
                 img_info = self.camera.get_image_bundle()
-                rgb_frame = img_info.get('rgb')
+                rgb_frame = img_info.get('rgb_full')
                 if rgb_frame is None: continue
 
                 detections = self.detector.detect(rgb_frame)

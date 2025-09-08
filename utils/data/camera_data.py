@@ -18,7 +18,7 @@ class CameraData:
                  ):
         """
         :param output_size: Image output size in pixels (square)
-        :param include_depth: Whether depth image is included
+        :param include_depth: Whether depth_full image is included
         :param include_rgb: Whether RGB image is included
         """
         self.output_size = output_size
@@ -63,7 +63,7 @@ class CameraData:
     def get_data(self, rgb=None, depth=None):
         depth_img = None
         rgb_img = None
-        # Load the depth image
+        # Load the depth_full image
         if self.include_depth:
             depth_img = self.get_depth(img=depth)
 

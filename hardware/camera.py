@@ -52,7 +52,7 @@ class RealSenseCamera:
         self.dist = np.array([self.intrinsics.coeffs[0], self.intrinsics.coeffs[1], self.intrinsics.coeffs[2],
                               self.intrinsics.coeffs[3], self.intrinsics.coeffs[4]])
 
-        # Determine depth scale
+        # Determine depth_full scale
         self.scale = cfg.get_device().first_depth_sensor().get_depth_scale()
 
     def disconnect(self):
@@ -96,21 +96,21 @@ class RealSenseCamera:
         depth_image = np.expand_dims(depth_image, axis=2)
 
         return {
-            'rgb': color_image,
+            'rgb_full': color_image,
             'aligned_depth': depth_image,
         }
 
     def plot_image_bundle(self):
         images = self.get_image_bundle()
 
-        rgb = images['rgb']
+        rgb = images['rgb_full']
         depth = images['aligned_depth']
 
         fig, ax = plt.subplots(1, 2, squeeze=False)
         ax[0, 0].imshow(rgb)
         m, s = np.nanmean(depth), np.nanstd(depth)
         ax[0, 1].imshow(depth.squeeze(axis=2), vmin=m - s, vmax=m + s, cmap=plt.cm.gray)
-        ax[0, 0].set_title('rgb')
+        ax[0, 0].set_title('rgb_full')
         ax[0, 1].set_title('aligned_depth')
 
         plt.show()
@@ -327,10 +327,10 @@ def test_depth_fill_methods(depth_npy_path):
 
     # 添加共用颜色条
     cbar_ax = plt.gcf().add_axes([0.92, 0.15, 0.01, 0.7])  # 位置[左,下,宽,高]
-    plt.colorbar(im, cax=cbar_ax, label='depth/m')
+    plt.colorbar(im, cax=cbar_ax, label='depth_full/m')
 
     plt.tight_layout(rect=[0, 0, 0.9, 1])  # 预留颜色条位置
-    plt.suptitle('depth fill methods', y=1.02, fontsize=12)
+    plt.suptitle('depth_full fill methods', y=1.02, fontsize=12)
     plt.show()
 
 

@@ -164,7 +164,7 @@ class EyeToHand:
             checkerboard_size = self.chessboard_size
             refine_criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
             image_bundle = self.camera.get_image_bundle()
-            camera_color_img = image_bundle['rgb']
+            camera_color_img = image_bundle['rgb_full']
             camera_depth_img = image_bundle['aligned_depth']
 
             bgr_color_data = cv2.cvtColor(camera_color_img, cv2.COLOR_RGB2BGR)
@@ -292,7 +292,7 @@ class EyeToHand:
             checkerboard_size = self.chessboard_size
             refine_criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
             image_bundle = self.camera.get_image_bundle()
-            camera_color_img = image_bundle['rgb']
+            camera_color_img = image_bundle['rgb_full']
             camera_depth_img = image_bundle['aligned_depth']
 
             bgr_color_data = cv2.cvtColor(camera_color_img, cv2.COLOR_RGB2BGR)
@@ -530,7 +530,7 @@ class EyeToHand:
         def on_mouse(event, x, y, flags, param):
             if event == cv2.EVENT_LBUTTONDOWN:
                 # 获取参数
-                rgb = param['rgb']
+                rgb = param['rgb_full']
                 depth = param['aligned_depth']
                 height, width = rgb.shape[:2]
 
@@ -563,7 +563,7 @@ class EyeToHand:
                 # 记录结果
                 measurement_results.append({
                     "pixel": (x, y),
-                    "depth": depth_value,
+                    "depth_full": depth_value,
                     "camera_coords": (Xc, Yc, Zc),
                     "base_coords": (Pbase[0], Pbase[1], Pbase[2])
                 })
@@ -588,12 +588,12 @@ class EyeToHand:
             while True:
                 # 获取图像
                 images = self.camera.get_image_bundle()
-                if not images or 'rgb' not in images or 'aligned_depth' not in images:
+                if not images or 'rgb_full' not in images or 'aligned_depth' not in images:
                     logger.info("获取图像失败，重试...")
                     continue
 
                 # 转换色彩空间以适应OpenCV显示
-                rgb = cv2.cvtColor(images['rgb'], cv2.COLOR_RGB2BGR)
+                rgb = cv2.cvtColor(images['rgb_full'], cv2.COLOR_RGB2BGR)
                 depth = images['aligned_depth']
 
                 # 显示操作提示
@@ -603,7 +603,7 @@ class EyeToHand:
                 # 显示窗口并绑定鼠标事件
                 cv2.imshow('RealSense 标定验证 (点击图像获取坐标)', rgb)
                 cv2.setMouseCallback('RealSense 标定验证 (点击图像获取坐标)',
-                                     on_mouse, param={'rgb': rgb, 'aligned_depth': depth})
+                                     on_mouse, param={'rgb_full': rgb, 'aligned_depth': depth})
 
                 # 处理键盘事件
                 key = cv2.waitKey(1) & 0xFF
@@ -615,7 +615,7 @@ class EyeToHand:
                         for i, res in enumerate(measurement_results, 1):
                             f.write(f"测量点 {i}:\n")
                             f.write(f"  像素坐标: {res['pixel']}\n")
-                            f.write(f"  深度值: {res['depth']:.4f}m\n")
+                            f.write(f"  深度值: {res['depth_full']:.4f}m\n")
                             f.write(f"  相机坐标: {res['camera_coords']}\n")
                             f.write(f"  基座坐标: {res['base_coords']}\n\n")
                     logger.info(f"已保存 {len(measurement_results)} 个测量结果到 {RESULTS_FILE}")
@@ -637,7 +637,7 @@ class EyeToHand:
                     for i, res in enumerate(measurement_results, 1):
                         f.write(f"测量点 {i}:\n")
                         f.write(f"  像素坐标: {res['pixel']}\n")
-                        f.write(f"  深度值: {res['depth']:.4f}m\n")
+                        f.write(f"  深度值: {res['depth_full']:.4f}m\n")
                         f.write(f"  相机坐标: {res['camera_coords']}\n")
                         f.write(f"  基座坐标: {res['base_coords']}\n\n")
                 logger.info(f"自动保存 {len(measurement_results)} 个测量结果到 {RESULTS_FILE}")

@@ -23,9 +23,9 @@ def parse_args():
     default_net_path = r'D:\PycharmProjects\robotic-grasping\logs\20250907_1739_training_cornell_grconvnet_goa_aff\best_iou_epoch_16_iou_0.9492'
     parser.add_argument('--network', type=str, default=default_net_path,
                         help='Path to saved network to evaluate')
-    parser.add_argument('--use-depth_full', type=int, default=1,
+    parser.add_argument('--use-depth', type=int, default=1,
                         help='Use Depth image for evaluation (1/0)')
-    parser.add_argument('--use-rgb_full', type=int, default=1,
+    parser.add_argument('--use-rgb', type=int, default=1,
                         help='Use RGB image for evaluation (1/0)')
     parser.add_argument('--n-grasps', type=int, default=1,
                         help='Number of grasps to consider per image')

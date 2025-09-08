@@ -189,12 +189,10 @@ def train(epoch, net, device, train_data, optimizer, batches_per_epoch, vis=Fals
     net.train()
 
     # 使用tqdm来迭代训练数据，显示训练进度
-    batch_idx = 0
     with tqdm(total=batches_per_epoch, desc=f"Epoch {epoch + 1:02d}", leave=True) as pbar:
-        for x, y, _, _, _ in train_data:
-            batch_idx += 1
+        for batch_idx, (x, y, _, _, _) in enumerate(train_data):
             # 控制每个epoch的批次数
-            if batch_idx > batches_per_epoch:
+            if batch_idx >= batches_per_epoch:
                 break
 
             xc = x.to(device)
@@ -202,9 +200,6 @@ def train(epoch, net, device, train_data, optimizer, batches_per_epoch, vis=Fals
             lossd = net.compute_loss(xc, yc)
 
             loss = lossd['loss']
-
-            # --- 移除旧的日志打印 ---
-            # if batch_idx % 100 == 0: ...
 
             results['loss'] += loss.item()
             for ln, l in lossd['losses'].items():

@@ -404,7 +404,7 @@ def run():
     # 添加学习率调度器 ---
     logging.info(f"Using ReduceLROnPlateau scheduler with patience={args.lr_patience}")
     # 我们要最大化IOU, 所以 mode='max'
-    scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=0.1, patience=args.lr_patience, verbose=True)
+    scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=0.1, patience=args.lr_patience)
 
     # Print model architecture.
     summary(net, (input_channels, args.input_size, args.input_size))

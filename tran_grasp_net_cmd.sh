@@ -58,19 +58,19 @@ python train_network.py --network grconvnet_goa --dataset cornell --dataset-path
 
 # ================Linux Jacquard 数据集======================
 # Jacquard baseline
-python train_network.py --network grconvnet_goa --dataset jacquard --dataset-path /root/datasets/Jacquard --description training_Jacquard --input-size 300 --split 0.9 --use-dropout 1 --batch-size 16
+conda activate grcnn && python train_network.py --network grconvnet_goa --dataset jacquard --dataset-path /root/datasets/Jacquard --description training_Jacquard --input-size 300 --split 0.9 --use-dropout 1 --batch-size 16
 # Jacquard upconv
-python train_network.py --network grconvnet_goa --dataset cornell --dataset-path /root/datasets/Jacquard --description training_Jacquard --input-size 300 --split 0.9 --use-dropout 1 --batch-size 16 --upconv 1
+conda activate grcnn && python train_network.py --network grconvnet_goa --dataset jacquard --dataset-path /root/datasets/Jacquard --description training_Jacquard --input-size 300 --split 0.9 --use-dropout 1 --batch-size 16 --upconv 1
 # Jacquard unet
-python train_network.py --network grconvnet_goa --dataset cornell --dataset-path /root/datasets/Jacquard --description training_Jacquard --input-size 300 --split 0.9 --use-dropout 1 --batch-size 16 --unet 1
+conda activate grcnn && python train_network.py --network grconvnet_goa --dataset jacquard --dataset-path /root/datasets/Jacquard --description training_Jacquard --input-size 300 --split 0.9 --use-dropout 1 --batch-size 16 --unet 1
 # Jacquard goa
-python train_network.py --network grconvnet_goa --dataset cornell --dataset-path /root/datasets/Jacquard --description training_Jacquard --input-size 300 --split 0.9 --use-dropout 1 --batch-size 16 --goa 1
+conda activate grcnn && python train_network.py --network grconvnet_goa --dataset jacquard --dataset-path /root/datasets/Jacquard --description training_Jacquard --input-size 300 --split 0.9 --use-dropout 1 --batch-size 16 --goa 1
 # Jacquard aff
-python train_network.py --network grconvnet_goa --dataset cornell --dataset-path /root/datasets/Jacquard --description training_Jacquard --input-size 300 --split 0.9 --use-dropout 1 --batch-size 16 --aff 1
+conda activate grcnn && python train_network.py --network grconvnet_goa --dataset jacquard --dataset-path /root/datasets/Jacquard --description training_Jacquard --input-size 300 --split 0.9 --use-dropout 1 --batch-size 16 --aff 1
 # Jacquard upconv + unet
-python train_network.py --network grconvnet_goa --dataset cornell --dataset-path /root/datasets/Jacquard --description training_Jacquard --input-size 300 --split 0.9 --use-dropout 1 --batch-size 16 --upconv 1 --unet 1
+conda activate grcnn && python train_network.py --network grconvnet_goa --dataset jacquard --dataset-path /root/datasets/Jacquard --description training_Jacquard --input-size 300 --split 0.9 --use-dropout 1 --batch-size 16 --upconv 1 --unet 1
 # Jacquard upconv + unet + goa
-python train_network.py --network grconvnet_goa --dataset cornell --dataset-path /root/datasets/Jacquard --description training_Jacquard --input-size 300 --split 0.9 --use-dropout 1 --batch-size 16 --upconv 1 --unet 1 --goa 1
+conda activate grcnn && python train_network.py --network grconvnet_goa --dataset jacquard --dataset-path /root/datasets/Jacquard --description training_Jacquard --input-size 300 --split 0.9 --use-dropout 1 --batch-size 16 --upconv 1 --unet 1 --goa 1
 # Jacquard upconv + unet + goa + aff
-python train_network.py --network grconvnet_goa --dataset cornell --dataset-path /root/datasets/Jacquard --description training_Jacquard --input-size 300 --split 0.9 --use-dropout 1 --batch-size 16 --upconv 1 --unet 1 --goa 1 --aff 1
+conda activate grcnn && python train_network.py --network grconvnet_goa --dataset jacquard --dataset-path /root/datasets/Jacquard --description training_Jacquard --input-size 300 --split 0.9 --use-dropout 1 --batch-size 16 --upconv 1 --unet 1 --goa 1 --aff 1
 

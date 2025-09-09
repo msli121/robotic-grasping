@@ -58,24 +58,24 @@ def train(args):
         save=True,
         save_period=args.save_period,
         name=f"{args.name}_{now_str}",
-        exist_ok=False,  # 覆盖同名实验
+        exist_ok=True,  # 覆盖同名实验
 
-        # --- 数据增强组合 ---
-        degrees=10.0,  # 旋转角度范围
-        translate=0.1,  # 平移范围
-        scale=0.1,  # 缩放范围
-        shear=2.0,  # 剪切角度范围
-        perspective=0.0,  # 透视变换范围
-        flipud=0.5,  # 上下翻转
-        fliplr=0.5,  # 水平翻转概率
-
-        hsv_h=0.015,  # HSV 颜色空间的色调变化范围
-        hsv_s=0.7,  # 饱和度变化范围
-        hsv_v=0.4,  # 亮度变化范围
-
-        # --- 可选的高级增强 ---
-        # mixup=0.1,
-        # copy_paste=0.1
+        # # --- 数据增强组合 ---
+        # degrees=20,  # 旋转角度范围
+        # translate=0.1,  # 平移范围
+        # scale=0.1,  # 缩放范围
+        # shear=2.0,  # 剪切角度范围
+        # perspective=0.0,  # 透视变换范围
+        # flipud=0.5,  # 上下翻转
+        # fliplr=0.5,  # 水平翻转概率
+        #
+        # hsv_h=0.015,  # HSV 颜色空间的色调变化范围
+        # hsv_s=0.7,  # 饱和度变化范围
+        # hsv_v=0.4,  # 亮度变化范围
+        #
+        # # --- 可选的高级增强 ---
+        # # mixup=0.1,
+        # # copy_paste=0.1
     )
 
     print("\nTraining completed.")

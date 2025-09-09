@@ -29,6 +29,9 @@ python train_network.py --network grconvnet_goa --dataset jacquard --dataset-pat
 # jacquard unet+aff
 python train_network.py --network grconvnet_goa --dataset jacquard --dataset-path D:\\datasets\\Jacquard --description training_Jacquard --use-dropout 1 --input-size 300 --split 0.9 --unet 1 --aff 1
 
+# Jacquard upconv + unet + goa
+python train_network.py --network grconvnet_goa --dataset jacquard --dataset-path D:\\datasets\\Jacquard --description training_Jacquard --input-size 300 --split 0.9 --use-dropout 1 --batch-size 16 --upconv 1 --unet 1 --goa 1
+
 # jacquard unet+goa+aff
 python train_network.py --network grconvnet_goa --dataset jacquard --dataset-path D:\\datasets\\Jacquard --description training_Jacquard --use-dropout 1 --input-size 300 --split 0.9 --unet 1 --goa 1 --aff 1
 

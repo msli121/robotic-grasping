@@ -107,7 +107,7 @@ def parse_args():
                         help='Weight decay for AdamW optimizer')
     parser.add_argument('--lr-patience', type=int, default=5,
                         help='Patience for learning rate scheduler (epochs)')
-    parser.add_argument('--early-stop-patience', type=int, default=20,
+    parser.add_argument('--early-stop-patience', type=int, default=15,
                         help='Patience for early stopping (epochs)')
     # ============================================================================
 
@@ -463,7 +463,7 @@ def run():
             patience_counter += 1
 
         # 保存周期性 checkpoint (可选)
-        if epoch % 10 == 0:
+        if epoch % 5 == 0:
             torch.save(net.state_dict(),
                        os.path.join(save_folder, f'checkpoint_epoch_{epoch + 1:02d}_iou_{iou:.4f}.pth'))
 

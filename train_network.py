@@ -435,7 +435,8 @@ def run():
         logging.info(f"Epoch {epoch + 1}/{args.epochs} - Validating...")
         test_results = validate(net, device, val_data, args.iou_threshold)
         iou = test_results['correct'] / (test_results['correct'] + test_results['failed'])
-        logging.info(f"Epoch {epoch + 1}/{args.epochs} - Validation Result: {test_results['correct']}/{test_results['correct'] + test_results['failed']} = {iou:.4f}")
+        logging.info(
+            f"Epoch {epoch + 1}/{args.epochs} - Validation Result: {test_results['correct']}/{test_results['correct'] + test_results['failed']} = {iou:.4f}")
 
         # Log validation results to tensorbaord
         tb.add_scalar('loss/IOU', test_results['correct'] / (test_results['correct'] + test_results['failed']), epoch)
@@ -463,13 +464,14 @@ def run():
 
         # 保存周期性 checkpoint (可选)
         if epoch % 5 == 0:
-            logging.info(f"Checkpoint saved at epoch {epoch + 1}")
+            logging.info(f"Epoch {epoch + 1}/{args.epochs} - Checkpoint saved")
             torch.save(net.state_dict(),
                        os.path.join(save_folder, f'checkpoint_epoch_{epoch + 1:02d}_iou_{iou:.4f}.pth'))
 
         # 检查是否需要提前停止
         if patience_counter >= args.early_stop_patience:
-            logging.info(f"Early stopping triggered after {patience_counter} epochs with no improvement.")
+            logging.info(
+                f"Epoch {epoch + 1}/{args.epochs} - Early stopping triggered after {patience_counter} epochs with no improvement.")
             break
 
 

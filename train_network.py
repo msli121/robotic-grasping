@@ -107,7 +107,7 @@ def parse_args():
                         help='Weight decay for AdamW optimizer')
     parser.add_argument('--lr-patience', type=int, default=5,
                         help='Patience for learning rate scheduler (epochs)')
-    parser.add_argument('--early-stop-patience', type=int, default=15,
+    parser.add_argument('--early-stop-patience', type=int, default=20,
                         help='Patience for early stopping (epochs)')
     # ============================================================================
 

@@ -11,7 +11,8 @@ torchsummary==1.5.1
 tensorboardX==2.6.2.2
 pyrealsense2
 Pillow==10.0.1
-tqdm
+tqdm==4.67.1
 scikit-learn
 colorlog
 PyQt5
+ultralytics==8.1.0

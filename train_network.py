@@ -81,6 +81,8 @@ def parse_args():
                         help='Random seed for numpy')
 
     # 优化后的网络grconvnet_mas的参数配置
+    parser.add_argument('--upconv', type=int, default=0,
+                        help='Use upconv for training (1/0)')
     parser.add_argument('--unet', type=int, default=0,
                         help='Use UNet for training (1/0)')
     parser.add_argument('--fpn', type=int, default=0,
@@ -189,47 +191,47 @@ def train(epoch, net, device, train_data, optimizer, batches_per_epoch, vis=Fals
     net.train()
 
     # 使用tqdm来迭代训练数据，显示训练进度
+    batch_idx = 0
     with tqdm(total=batches_per_epoch, desc=f"Epoch {epoch + 1:02d}", leave=True) as pbar:
-        for batch_idx, (x, y, _, _, _) in enumerate(train_data):
-            # 控制每个epoch的批次数
-            if batch_idx >= batches_per_epoch:
-                break
+        while batch_idx < batches_per_epoch:
+            for x, y, _, _, _ in train_data:
+                # 控制每个epoch的批次数
+                if batch_idx > batches_per_epoch:
+                    break
+                batch_idx += 1
 
-            xc = x.to(device)
-            yc = [yy.to(device) for yy in y]
-            lossd = net.compute_loss(xc, yc)
+                xc = x.to(device)
+                yc = [yy.to(device) for yy in y]
+                lossd = net.compute_loss(xc, yc)
 
-            loss = lossd['loss']
+                loss = lossd['loss']
 
-            # --- 移除旧的日志打印 ---
-            # if batch_idx % 100 == 0: ...
+                results['loss'] += loss.item()
+                for ln, l in lossd['losses'].items():
+                    results['losses'].setdefault(ln, 0)
+                    results['losses'][ln] += l.item()
 
-            results['loss'] += loss.item()
-            for ln, l in lossd['losses'].items():
-                results['losses'].setdefault(ln, 0)
-                results['losses'][ln] += l.item()
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
 
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+                # 更新tqdm进度条的后缀信息，显示实时loss
+                pbar.set_postfix(loss=f"{loss.item():.4f}")
+                pbar.update(1)
 
-            # 更新tqdm进度条的后缀信息，显示实时loss
-            pbar.set_postfix(loss=f"{loss.item():.4f}")
-            pbar.update(1)
-
-            # Display the images
-            if vis:
-                imgs = []
-                n_img = min(4, x.shape[0])
-                for idx in range(n_img):
-                    imgs.extend([x[idx,].numpy().squeeze()] + [yi[idx,].numpy().squeeze() for yi in y] + [
-                        x[idx,].numpy().squeeze()] + [pc[idx,].detach().cpu().numpy().squeeze() for pc in
-                                                      lossd['pred'].values()])
-                gridshow('Display', imgs,
-                         [(xc.min().item(), xc.max().item()), (0.0, 1.0), (0.0, 1.0), (-1.0, 1.0),
-                          (0.0, 1.0)] * 2 * n_img,
-                         [cv2.COLORMAP_BONE] * 10 * n_img, 10)
-                cv2.waitKey(2)
+                # Display the images
+                if vis:
+                    imgs = []
+                    n_img = min(4, x.shape[0])
+                    for idx in range(n_img):
+                        imgs.extend([x[idx,].numpy().squeeze()] + [yi[idx,].numpy().squeeze() for yi in y] + [
+                            x[idx,].numpy().squeeze()] + [pc[idx,].detach().cpu().numpy().squeeze() for pc in
+                                                          lossd['pred'].values()])
+                    gridshow('Display', imgs,
+                             [(xc.min().item(), xc.max().item()), (0.0, 1.0), (0.0, 1.0), (-1.0, 1.0),
+                              (0.0, 1.0)] * 2 * n_img,
+                             [cv2.COLORMAP_BONE] * 10 * n_img, 10)
+                    cv2.waitKey(2)
 
     # batch_idx = 0
     # # Use batches per epoch to make training on different sized datasets (cornell/jacquard) more equivalent.
@@ -300,6 +302,7 @@ def run():
             dropout=bool(args.use_dropout),  # 是否使用dropout
             prob=args.dropout_prob,  # dropout概率
             channel_size=args.channel_size,  # 通道数
+            use_upconv=bool(args.upconv),  # 是否使用上采样卷积
             use_unet=bool(args.unet),  # 是否使用UNet
             use_fpn=bool(args.fpn),  # 是否使用FPN
             use_cbam=bool(args.cbam),  # 是否使用CBAM
@@ -404,7 +407,7 @@ def run():
     # 添加学习率调度器 ---
     logging.info(f"Using ReduceLROnPlateau scheduler with patience={args.lr_patience}")
     # 我们要最大化IOU, 所以 mode='max'
-    scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=0.1, patience=args.lr_patience, verbose=True)
+    scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=0.1, patience=args.lr_patience)
 
     # Print model architecture.
     summary(net, (input_channels, args.input_size, args.input_size))
@@ -471,62 +474,4 @@ def run():
 
 
 if __name__ == '__main__':
-    # baseline cornell
-    # python train_network.py --network grconvnet3 --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell_grconvnet3 --use-dropout 1 --input-size 224 --split 0.8
-
-    # baseline jacquard
-    # python train_network.py --network grconvnet3 --dataset jacquard --dataset-path D:\\datasets\\Jacquard --description training_Jacquard_grconvnet3 --use-dropout 1 --input-size 224 --split 0.9
-
-    # mas 改进全开 cornell
-    # python train_network.py --network grconvnet_mas --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell_grconvnet_mas --input-size 224 --use-dropout 1 --fpn 1 --cbam 1 --spdconv 1 --spd-scale 2 --split 0.8
-
-    # mas 改进全开 jacquard
-    # python train_network.py --network grconvnet_mas --dataset jacquard --dataset-path D:\\datasets\\Jacquard --description training_Jacquard_grconvnet_mas --input-size 224 --use-dropout 1 --fpn 1 --cbam 1 --spdconv 1 --spd-scale 2 --split 0.9
-
-    # goa 改进全开 cornell
-    # python train_network.py --network grconvnet_goa --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell_grconvnet_goa --input-size 224 --use-dropout 1 --fpn 1 --goa 1 --spdconv 1 --spd-scale 2 --split 0.8
-
-    # goa 改进全开 jacquard
-    # python train_network.py --network grconvnet_goa --dataset jacquard --dataset-path D:\\datasets\\Jacquard --description training_Jacquard_grconvnet_goa --input-size 224 --use-dropout 1 --fpn 1 --goa 1 --spdconv 1 --spd-scale 2 --split 0.9
-
-    # 0. 基线
-    # python train_network.py --network grconvnet3 --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell --use-dropout 1 --input-size 224 --split 0.8
-
-    # 1. 基线 + FPN + SPD-Conv
-    # python train_network.py --network grconvnet_goa --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell --use-dropout 1 --input-size 300 --split 0.8 --fpn 1 --spdconv 1 --goa 0 --aff 0 --cbam 0
-
-    # 2. 强基线 (FPN+SPD) + CBAM (作为对比)
-    # python train_network.py --network grconvnet_goa --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell --use-dropout 1 --input-size 300 --split 0.8 --fpn 1 --spdconv 1 --goa 0 --aff 0 --cbam 1
-
-    # 3. 强基线 (FPN+SPD) + GOA (核心创新点)
-    # python train_network.py --network grconvnet_goa --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell --use-dropout 1 --input-size 300 --split 0.8 --fpn 1 --spdconv 1 --goa 1 --aff 0 --cbam 0
-
-    # 4. 完整模型: 强基线 (FPN+SPD) + GOA + AFF
-    # python train_network.py --network grconvnet_goa --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell --use-dropout 1 --input-size 300 --split 0.8 --fpn 1 --spdconv 1 --goa 1 --aff 1 --cbam 0
-
-    # 5. only goa
-    # python train_network.py --network grconvnet_goa --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell --use-dropout 1 --input-size 300 --split 0.8 --goa 1
-    # 6. only aff
-    # python train_network.py --network grconvnet_goa --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell --use-dropout 1 --input-size 300 --split 0.8 --aff 1
-    # 7. goa + aff
-    # python train_network.py --network grconvnet_goa --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell --use-dropout 1 --input-size 300 --split 0.8 --goa 1 --aff 1
-
-    # jacquard unet
-    # python train_network.py --network grconvnet_goa --dataset jacquard --dataset-path D:\\datasets\\Jacquard --description training_Jacquard --use-dropout 1 --input-size 300 --batch-size 16 --split 0.9 --unet 1
-
-    # jacquard goa
-    # python train_network.py --network grconvnet_goa --dataset jacquard --dataset-path D:\\datasets\\Jacquard --description training_Jacquard --use-dropout 1 --input-size 300 --split 0.9 --goa 1
-
-    # jacquard unet+goa
-    # python train_network.py --network grconvnet_goa --dataset jacquard --dataset-path D:\\datasets\\Jacquard --description training_Jacquard --use-dropout 1 --input-size 300 --split 0.9 --unet 1 --goa 1
-
-    # jacquard unet+aff
-    # python train_network.py --network grconvnet_goa --dataset jacquard --dataset-path D:\\datasets\\Jacquard --description training_Jacquard --use-dropout 1 --input-size 300 --split 0.9 --unet 1 --aff 1
-
-    # jacquard unet+goa+aff
-    # python train_network.py --network grconvnet_goa --dataset jacquard --dataset-path D:\\datasets\\Jacquard --description training_Jacquard --use-dropout 1 --input-size 300 --split 0.9 --unet 1 --goa 1 --aff 1
-
-    # jacquard FPN + GOA + AFF
-    # python train_network.py --network grconvnet_goa --dataset jacquard --dataset-path D:\\datasets\\Jacquard --description training_Jacquard --use-dropout 1 --input-size 300 --split 0.9 --fpn 1 --goa 1 --aff 1
-
     run()

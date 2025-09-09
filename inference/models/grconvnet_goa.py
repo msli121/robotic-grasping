@@ -11,7 +11,6 @@ grconvnet_goa.py - 基于GOA注意力机制的改进GR-ConvNet
 Author: [lms]
 Date: 2025.8
 """
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -247,7 +246,7 @@ class AdaptiveFeatureFusion(nn.Module):
 
 
 # ============================================================================
-# 主网络模型 - 继承GraspModel保证兼容性
+# 主网络模型
 # ============================================================================
 
 class GenerativeResnet(GraspModel):
@@ -277,6 +276,7 @@ class GenerativeResnet(GraspModel):
                  dropout=False,
                  prob=0.0,
                  # 新增参数：模块开关
+                 use_upconv=False,  # 控制上采样方式
                  use_unet=False,  # 控制U-Net跳跃连接
                  use_fpn=False,  # 控制FPN多尺度特征
                  use_cbam=False,  # 控制CBAM传统注意力
@@ -288,6 +288,7 @@ class GenerativeResnet(GraspModel):
 
         # 保存配置
         self.config = {
+            'use_upconv': use_upconv,
             'use_unet': use_unet,
             'use_fpn': use_fpn,
             'use_spd': use_spd,
@@ -296,7 +297,9 @@ class GenerativeResnet(GraspModel):
             'use_aff': use_aff,
             'spd_scale': spd_scale
         }
-        self.use_unet, self.use_fpn, self.use_spd, self.use_goa, self.use_aff = use_unet, use_fpn, use_spd, use_goa, use_aff
+        self.use_cbam, self.use_goa, self.use_aff = use_cbam, use_goa, use_aff
+        self.use_upconv, self.use_unet, self.use_fpn, self.use_spd = use_upconv, use_unet, use_fpn, use_spd
+
         cs = channel_size
 
         # 互斥检查
@@ -322,18 +325,32 @@ class GenerativeResnet(GraspModel):
         self.res5 = ResidualBlock(cs * 4, cs * 4)
 
         # === 2.解码器 (保持原网络输出层逻辑) ===
-        self.conv4 = nn.ConvTranspose2d(cs * 4, cs * 2, kernel_size=4, stride=2, padding=1, output_padding=1)
-        self.bn4 = nn.BatchNorm2d(cs * 2)
-        self.conv5 = nn.ConvTranspose2d(cs * 2, cs, kernel_size=4, stride=2, padding=2, output_padding=1)
-        self.bn5 = nn.BatchNorm2d(cs)
-        self.conv6 = nn.ConvTranspose2d(cs, cs, kernel_size=9, stride=1, padding=4)
+        if self.use_upconv:
+            # 使用 "上采样 + 卷积" 方式
+            self.up4 = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
+            self.conv4 = nn.Conv2d(cs * 4, cs * 2, 3, padding=1)
+            self.bn4 = nn.BatchNorm2d(cs * 2)
+
+            self.up5 = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
+            self.conv5 = nn.Conv2d(cs * 2, cs, 3, padding=1)
+            self.bn5 = nn.BatchNorm2d(cs)
+
+            self.conv6 = nn.Conv2d(cs, cs, 9, padding=4)
+        else:
+            self.conv4 = nn.ConvTranspose2d(cs * 4, cs * 2, kernel_size=4, stride=2, padding=1, output_padding=1)
+            self.bn4 = nn.BatchNorm2d(cs * 2)
+
+            self.conv5 = nn.ConvTranspose2d(cs * 2, cs, kernel_size=4, stride=2, padding=2, output_padding=1)
+            self.bn5 = nn.BatchNorm2d(cs)
+
+            self.conv6 = nn.ConvTranspose2d(cs, cs, kernel_size=9, stride=1, padding=4)
 
         # === 3. 跳跃连接/特征增强模块 可选增强模块 ===
         if use_fpn:
             self.fpn = FPN([cs, cs * 2, cs * 4], cs)
             self.fpn_proj1 = nn.Conv2d(cs, cs * 2, kernel_size=1)  # p3(cs) -> x1(cs*2)
             self.fpn_proj2 = nn.Conv2d(cs, cs, kernel_size=1)  # p2(cs) -> x2(cs) (通道数相同，可选)
-        else:
+        elif use_unet:
             # === U-Net 模式下的专用模块 (用于对齐跳跃连接的通道) ===
             self.unet_proj1 = nn.Conv2d(cs * 2, cs * 2, kernel_size=1)  # c2(cs*2) -> x1(cs*2)
             self.unet_proj2 = nn.Conv2d(cs, cs, kernel_size=1)  # c1(cs)   -> x2(cs)
@@ -353,21 +370,25 @@ class GenerativeResnet(GraspModel):
             self.attention2 = nn.Identity()
 
         # ===  5. 特征融合模块 (按需创建) ===
-        if use_aff:
-            # 创新融合
-            self.fusion1 = AdaptiveFeatureFusion(cs * 2)
-            self.fusion2 = AdaptiveFeatureFusion(cs)
-        else:
-            # 使用加法简单融合
-            self.fusion1 = self._simple_fusion
-            self.fusion2 = self._simple_fusion
+        if use_unet or use_fpn:
+            if use_aff:
+                self.fusion1 = AdaptiveFeatureFusion(...)
+                self.fusion2 = AdaptiveFeatureFusion(...)
+            else:
+                self.fusion1 = self._simple_fusion
+                self.fusion2 = self._simple_fusion
 
         # === 输出头 (与原网络保持一致) ===
-        # 注意：使用2x2卷积保持与原始grconvnet3.py一致
-        self.pos_output = nn.Conv2d(in_channels=cs, out_channels=output_channels, kernel_size=2)
-        self.cos_output = nn.Conv2d(in_channels=cs, out_channels=output_channels, kernel_size=2)
-        self.sin_output = nn.Conv2d(in_channels=cs, out_channels=output_channels, kernel_size=2)
-        self.width_output = nn.Conv2d(in_channels=cs, out_channels=output_channels, kernel_size=2)
+        if use_upconv:
+            self.pos_output = nn.Conv2d(in_channels=cs, out_channels=output_channels, kernel_size=1)
+            self.cos_output = nn.Conv2d(in_channels=cs, out_channels=output_channels, kernel_size=1)
+            self.sin_output = nn.Conv2d(in_channels=cs, out_channels=output_channels, kernel_size=1)
+            self.width_output = nn.Conv2d(in_channels=cs, out_channels=output_channels, kernel_size=1)
+        else:
+            self.pos_output = nn.Conv2d(in_channels=cs, out_channels=output_channels, kernel_size=2)
+            self.cos_output = nn.Conv2d(in_channels=cs, out_channels=output_channels, kernel_size=2)
+            self.sin_output = nn.Conv2d(in_channels=cs, out_channels=output_channels, kernel_size=2)
+            self.width_output = nn.Conv2d(in_channels=cs, out_channels=output_channels, kernel_size=2)
 
         # === Dropout (与原网络保持一致) ===
         self.dropout = dropout
@@ -412,9 +433,12 @@ class GenerativeResnet(GraspModel):
         # c1: (cs, 224, 224), c2: (cs*2, 112, 112), c4: (cs*4, 56, 56)
         c1, c2, c4 = self._encode(x_in)
 
-        # 2. 解码阶段 - 第一次上采样
-        # x: (cs*2, 112, 112)
-        x = F.relu(self.bn4(self.conv4(c4)))
+        # 2. 解码阶段 x: (cs*2, 112, 112) 第一次上采样
+        if self.use_upconv:
+            x = self.up4(c4)
+            x = F.relu(self.bn4(self.conv4(x)))
+        else:
+            x = F.relu(self.bn4(self.conv4(c4)))
 
         # 3. 第一次可选的跳跃连接、融合与注意力
         # 如果 use_fpn 和 use_unet 都为 False, 则 x 保持不变 (Baseline)
@@ -430,9 +454,13 @@ class GenerativeResnet(GraspModel):
             # 特征融合
             x = self.fusion1(x, c2_proj)
 
-        # 4. 解码阶段 - 第二次上采样
-        # x: (cs, 224, 224)
-        x = F.relu(self.bn5(self.conv5(x)))
+        # 4.解码阶段 第二次上采样 x: (cs, 224, 224)
+        if self.use_upconv:
+            x = self.up5(x)
+            x = F.relu(self.bn5(self.conv5(x)))
+        else:
+            x = F.relu(self.bn5(self.conv5(x)))
+
         # 5. 第二次可选的跳跃连接、融合与注意力
         if self.use_fpn:
             # FPN 模式
@@ -474,8 +502,9 @@ class GenerativeResnet(GraspModel):
         """获取配置名称 - 便于实验管理"""
         config = self.config
         name_parts = ['goanet']
-
         additions = []
+        if config['use_upconv']:
+            additions.append('upconv')
         if config['use_unet']:
             additions.append('unet')
         if config['use_fpn']:
@@ -497,67 +526,14 @@ class GenerativeResnet(GraspModel):
         return '_'.join(name_parts)
 
 
-# ============================================================================
-# 预定义配置工厂函数 - 便于快速实验
-# ============================================================================
-
-def create_baseline_model(**kwargs):
-    """基线模型：原始GR-ConvNet"""
-    return GenerativeResnet(**kwargs)
-
-
-def create_mas_model(**kwargs):
-    """MAS模型：FPN + SPD + CBAM"""
-    kwargs.update({
-        'use_fpn': True,
-        'use_spd': True,
-        'use_cbam': True
-    })
-    return GenerativeResnet(**kwargs)
-
-
-def create_goa_only_model(**kwargs):
-    """仅GOA模型：FPN + SPD + GOA"""
-    kwargs.update({
-        'use_fpn': True,
-        'use_spd': True,
-        'use_goa': True
-    })
-    return GenerativeResnet(**kwargs)
-
-
-def create_aff_only_model(**kwargs):
-    """仅AFF模型：FPN + SPD + CBAM + AFF"""
-    kwargs.update({
-        'use_fpn': True,
-        'use_spd': True,
-        'use_cbam': True,
-        'use_aff': True
-    })
-    return GenerativeResnet(**kwargs)
-
-
-def create_improved_model(**kwargs):
-    """完整改进模型：FPN + SPD + GOA + AFF"""
-    kwargs.update({
-        'use_fpn': True,
-        'use_spd': True,
-        'use_goa': True,
-        'use_aff': True
-    })
-    return GenerativeResnet(**kwargs)
-
-
-# ============================================================================
-# 使用示例和测试代码
-# ============================================================================
-
 if __name__ == "__main__":
     print("🧪 测试改进版 GR-ConvNet 模型")
 
     # 测试不同配置
     configs = {
         'baseline': {},
+        'unet_only': {'use_unet': True},
+        'upconv_only': {'use_upconv': True},
         'goa_only': {'use_goa': True},
         'aff_only': {'use_aff': True},
         'fpn_only': {'use_fpn': True},
@@ -586,7 +562,7 @@ if __name__ == "__main__":
 
         # 测试前向传播
         with torch.no_grad():
-            x = torch.randn(2, 4, 224, 224).to(device)
+            x = torch.randn(2, 4, 300, 300).to(device)
             outputs = model(x)
 
             print(f"输出形状: {[out.shape for out in outputs]}")

@@ -463,7 +463,7 @@ def run():
             patience_counter += 1
 
         # 保存周期性 checkpoint (可选)
-        if epoch % 10 == 0:
+        if epoch % 5 == 0:
             torch.save(net.state_dict(),
                        os.path.join(save_folder, f'checkpoint_epoch_{epoch + 1:02d}_iou_{iou:.4f}.pth'))
 

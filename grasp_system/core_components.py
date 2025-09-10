@@ -4,16 +4,24 @@
 # @Description: 包含了所有硬件和模型模块的核心组件的引用
 import os
 import time
-
+import logging
 import cv2
 import numpy as np
 import torch
+from ultralytics import YOLO
 
 from utils.data.camera_data import CameraData
 from hardware.camera import RealSenseCamera
 from hardware.device import get_device
 from inference.post_process import post_process_output
 from utils.dataset_processing.grasp import detect_grasps
+from yolov8.inference import YOLOv8_Detector
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+)
+logger = logging.getLogger(__name__)
 
 
 # ============================================================================
@@ -30,7 +38,7 @@ class CameraHandler:
         time.sleep(0.5)
         self.camera = RealSenseCamera()
         self.camera.connect()
-        print("Camera connected...")
+        logger.info("Camera connected...")
         return True
 
     def get_frame(self):
@@ -42,7 +50,7 @@ class CameraHandler:
             depth = info['aligned_depth']
             return rgb, depth
         except Exception as e:
-            print(e)
+            logger.info(e)
             raise e
 
     @staticmethod
@@ -54,7 +62,7 @@ class CameraHandler:
         return frame + noise, np.random.rand(480, 640)
 
     def disconnect(self):
-        print("[Placeholder] Camera disconnected.")
+        logger.info("[Placeholder] Camera disconnected.")
 
 
 class ArmController:
@@ -63,22 +71,22 @@ class ArmController:
     def connect(self, ip):
         # TODO: 替换为真实的 DensorRobot 连接代码
         time.sleep(0.5)
-        print(f"[Placeholder] Arm connected to {ip}.")
+        logger.info(f"[Placeholder] Arm connected to {ip}.")
         return True
 
     def go_home(self):
-        print("[Placeholder] Arm going to home position.")
+        logger.info("[Placeholder] Arm going to home position.")
         time.sleep(2)
         return True
 
     def move_to(self, pose):
         # TODO: 替换为真实的 robot.send_position(pose)
-        print(f"[Placeholder] Arm moving to pose: {pose}")
+        logger.info(f"[Placeholder] Arm moving to pose: {pose}")
         time.sleep(1.5)
         return True
 
     def disconnect(self):
-        print("[Placeholder] Arm disconnected.")
+        logger.info("[Placeholder] Arm disconnected.")
 
 
 class GripperController:
@@ -87,21 +95,21 @@ class GripperController:
     def connect(self, mac_address):
         # TODO: 替换为真实的 GripperControllerWrapper 连接代码
         time.sleep(0.5)
-        print(f"[Placeholder] Gripper connected to {mac_address}.")
+        logger.info(f"[Placeholder] Gripper connected to {mac_address}.")
         return True
 
     def open(self):
-        print("[Placeholder] Gripper opening.")
+        logger.info("[Placeholder] Gripper opening.")
         time.sleep(0.5)
         return True
 
     def close(self):
-        print("[Placeholder] Gripper closing.")
+        logger.info("[Placeholder] Gripper closing.")
         time.sleep(0.5)
         return True
 
     def disconnect(self):
-        print("[Placeholder] Gripper disconnected.")
+        logger.info("[Placeholder] Gripper disconnected.")
 
 
 class RobotPlanner:
@@ -152,32 +160,34 @@ class RobotPlanner:
 # ============================================================================
 
 class DetectionModel:
-    """YOLO-World 目标检测模型"""
+    """YOLO-World or YOLOv8 目标检测模型"""
 
-    def __init__(self, model_path="path/to/yolo.pt"):
-        # TODO: 在这里加载你真实的YOLO-World模型
-        print(f"[Placeholder] Loading detection model from {model_path}")
-        time.sleep(1)  # 模拟模型加载
+    def __init__(self, model_path=None, model_type='yolov8'):
+        """
+        初始化检测模型
+        :param model_path: 模型文件路径
+        :param model_type: 模型类型, 'yolov8' 或 'yolo-world'
+        """
+        if model_path is None:
+            model_path = r"D:\PycharmProjects\robotic-grasping\yolov8\runs\detect\train3\weights\best.pt"
+        self.model_type = model_type
+        self.model_path = model_path
+        logger.info(f"[DetectionModel] [{model_type}] Loading detection model from {model_path}")
+        if model_path is None:
+            raise Exception("Model path is None")
+        if self.model_type == 'yolov8':
+            self.detector = YOLOv8_Detector(model_path)
+            self.detector.load_model()
 
-    def detect(self, image, text_prompt):
-        # TODO: 替换为真实的 YOLO-World 模型推理代码
-        if not text_prompt:
-            return []
-
-        print(f"[Placeholder] Detecting '{text_prompt}'...")
-        time.sleep(0.2)  # 模拟推理耗时
-
-        # 模拟随机检测到 1 到 3 个物体
-        num_detections = np.random.randint(1, 4)
-        detections = []
-        for i in range(num_detections):
-            x1 = np.random.randint(50, 250)
-            y1 = np.random.randint(50, 200)
-            x2 = x1 + np.random.randint(80, 150)
-            y2 = y1 + np.random.randint(80, 150)
-            score = np.random.uniform(0.75, 0.98)
-            detections.append(((x1, y1, x2, y2), score))
-        return detections  # 返回 [(bbox, score), ...]
+    def detect(self, image: np.ndarray, text_prompt: str) -> list:
+        """
+        执行目标检测
+        :param image: 输入图像, np.array, shape=(H, W, 3)
+        :param text_prompt: 检测提示词
+        :return: 检测结果列表
+        """
+        logger.info(f"[DetectionModel] Detecting '{text_prompt}'...")
+        return self.detector.detect(image)
 
 
 class GraspModel:
@@ -188,7 +198,7 @@ class GraspModel:
         if not os.path.exists(self.model_path):
             raise Exception(f"Grasp Model file not found at {self.model_path}")
         self.cam_data = CameraData(include_depth=True, include_rgb=True)
-        print('Loading grasp model... ')
+        logger.info('Loading grasp model... ')
         self.model = torch.load(self.model_path)
         # Get the compute device
         self.device = get_device(force_cpu=False)
@@ -226,18 +236,18 @@ class CoordinateTransformer:
         camera_matrix_file = r'D:\PycharmProjects\robotic-grasping\calibrate\calibrate_result\camera_matrix.txt'
         if not os.path.exists(camera_matrix_file):
             # raise Exception(f"Camera Matrix file not found at {camera_matrix_file}")
-            print(f"Camera Matrix file not found at {camera_matrix_file}")
+            logger.info(f"Camera Matrix file not found at {camera_matrix_file}")
             return False
         self.camera_matrix = np.loadtxt(camera_matrix_file, delimiter=' ')
-        print("Camera matrix loaded.")
+        logger.info("Camera matrix loaded.")
 
         M_base_camera_file = r'D:\PycharmProjects\robotic-grasping\calibrate\calibrate_result\M_base_camera.txt'
         if not os.path.exists(M_base_camera_file):
             # raise Exception(f"M_base_camera file not found at {M_base_camera_file}")
-            print(f"M_base_camera file not found at {M_base_camera_file}")
+            logger.info(f"M_base_camera file not found at {M_base_camera_file}")
             return False
         self.M_base_camera = np.loadtxt(M_base_camera_file, delimiter=' ')
-        print("M_base_camera loaded.")
+        logger.info("M_base_camera loaded.")
         return True
 
     def transform_pixel_to_camera(self, u, v, depth_value) -> np.ndarray:
@@ -302,7 +312,7 @@ class InstructionParser:
 
     def parse(self, text):
         # TODO: 实现我们之前讨论的、更强大的基于关键词的解析器
-        print(f"[Placeholder] Parsing instruction: '{text}'")
+        logger.info(f"[Placeholder] Parsing instruction: '{text}'")
         if "所有" in text or "全部" in text:
             prompt = "bolt"  # 简化处理，假设是bolt
             return [{'prompt': prompt, 'quantity': 'all'}]

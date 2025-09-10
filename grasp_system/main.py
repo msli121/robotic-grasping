@@ -7,10 +7,10 @@ from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QHBoxLayout, QLa
 from PyQt5.QtCore import QThread, pyqtSignal, pyqtSlot, Qt, QRect
 from PyQt5.QtGui import QImage, QPixmap, QPainter, QColor
 
-# 确保其他模块文件与 main.py 在同一个文件夹或Python路径下
 from backend import SystemBackend
 from stylesheet import STYLE_SHEET
 from ui_components import ControlPanel, VisionLogPanel, AnalysisPanel
+from drawing_utils import DrawingUtils
 
 
 def format_image_for_display(img):
@@ -108,6 +108,9 @@ class MainWindow(QMainWindow):
         cp.stop_signal.connect(self.backend.stop_all_tasks)
         self.cleanup_signal.connect(self.backend.cleanup)
 
+        cp.detection_toggle_signal.connect(self.backend.set_detection_enabled)
+        cp.grasp_toggle_signal.connect(self.backend.set_grasp_enabled)
+
         # --- 线程管理 ---
         self.backend_thread.started.connect(self.backend.run)
         self.backend.finished.connect(self.backend_thread.quit)
@@ -116,36 +119,31 @@ class MainWindow(QMainWindow):
         print("All signal-slot connections established.")
 
     # --- 负责接收后端数据并更新UI ---
-    @pyqtSlot(object)
-    def _update_main_image(self, frame):
-        """
-        核心优化: 更新主视觉区。
-        保持视频流内容(640x480)的原始分辨率，并将其居中绘制在可缩放的QLabel上。
-        """
-        # 1. 获取 QLabel 当前的尺寸 (这是可变的布局空间)
+    @pyqtSlot(dict)
+    def _update_main_image(self, data: dict):
+        """更新主视觉区，并将绘制任务委托给 DrawingUtils。"""
+        frame = data.get('frame')
+
         label = self.vision_log_panel.main_video_label
         canvas = QPixmap(label.size())
-        canvas.fill(QColor('black'))  # 创建一个与QLabel等大的黑色画布
+        canvas.fill(QColor('black'))
 
-        # 2. 将传入的视频帧 (numpy array) 转换为 QPixmap
         video_pixmap = format_image_for_display(frame)
 
-        # 3. 如果成功转换 (帧不是空的)
         if video_pixmap:
-            # 4. 创建一个 QPainter 在我们的画布上进行绘制
             painter = QPainter(canvas)
-
-            # 5. 计算目标绘制区域，使其在画布中央
-            video_size = video_pixmap.size()  # 这是固定的 640x480
+            video_size = video_pixmap.size()
             x = (label.width() - video_size.width()) // 2
             y = (label.height() - video_size.height()) // 2
             target_rect = QRect(x, y, video_size.width(), video_size.height())
 
-            # 6. 将视频流 QPixmap 绘制到画布的中央
             painter.drawPixmap(target_rect, video_pixmap)
+
+            # 将绘制任务委托给 DrawingUtils
+            painter.translate(x, y)  # 平移坐标系到视频帧左上角
+            DrawingUtils.draw_all_annotations(painter, data)
             painter.end()
 
-        # 7. 将最终绘制好的画布(可能带有黑边)设置为 QLabel 的内容
         label.setPixmap(canvas)
 
     @pyqtSlot(object)

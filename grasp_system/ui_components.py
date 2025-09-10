@@ -2,7 +2,7 @@
 
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
                              QTextEdit, QComboBox, QRadioButton, QButtonGroup,
-                             QFrame, QGridLayout, QSizePolicy)
+                             QFrame, QGridLayout, QSizePolicy, QCheckBox)
 from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt
 
 
@@ -20,6 +20,10 @@ class ControlPanel(QFrame):
     strategy_signal = pyqtSignal(str)
     execute_grasp_signal = pyqtSignal()
     stop_signal = pyqtSignal()
+
+    # 识别和抓取开关信号
+    detection_toggle_signal = pyqtSignal(bool)
+    grasp_toggle_signal = pyqtSignal(bool)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -60,6 +64,19 @@ class ControlPanel(QFrame):
         frame = QFrame()
         layout = QVBoxLayout(frame)
         layout.addWidget(QLabel("<b>任务控制</b>"))
+
+        # --- 新增功能开关 ---
+        layout.addWidget(QLabel("功能开关:"))
+        self.enable_detection_cb = QCheckBox("开启目标识别")
+        self.enable_grasp_cb = QCheckBox("开启抓取预测")
+        self.enable_detection_cb.setEnabled(False)
+        self.enable_grasp_cb.setEnabled(False)
+        switch_hbox = QHBoxLayout()
+        switch_hbox.addWidget(self.enable_detection_cb)
+        switch_hbox.addWidget(self.enable_grasp_cb)
+        layout.addLayout(switch_hbox)
+        # --- 结束 ---
+
         self.auto_mode_radio = QRadioButton("自动模式")
         self.inst_mode_radio = QRadioButton("指令模式")
         self.mode_group = QButtonGroup()
@@ -116,6 +133,9 @@ class ControlPanel(QFrame):
         self.arm_btns[1].clicked.connect(self.disconnect_arm_signal.emit)
         self.gripper_btns[0].clicked.connect(self.connect_gripper_signal.emit)
         self.gripper_btns[1].clicked.connect(self.disconnect_gripper_signal.emit)
+        # 目标识别和抓取预测开关
+        self.enable_detection_cb.toggled.connect(self.detection_toggle_signal.emit)
+        self.enable_grasp_cb.toggled.connect(self.grasp_toggle_signal.emit)
         # 任务控制
         self.mode_group.buttonClicked.connect(self.update_mode_ui)
         self.send_inst_button.clicked.connect(lambda: self.instruction_signal.emit(self.instruction_text.toPlainText()))
@@ -145,6 +165,13 @@ class ControlPanel(QFrame):
             status_indicator.setStyleSheet(f"background-color: {color}")
             conn_btn.setEnabled(not is_connected)
             disconn_btn.setEnabled(is_connected)
+
+        if device == "cam":
+            self.enable_detection_cb.setEnabled(is_connected)
+            self.enable_grasp_cb.setEnabled(is_connected)
+            if not is_connected:
+                self.enable_detection_cb.setChecked(False)
+                self.enable_grasp_cb.setChecked(False)
 
 
 class VisionLogPanel(QFrame):

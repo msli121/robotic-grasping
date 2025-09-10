@@ -14,9 +14,9 @@ class SystemBackend(QObject):
     系统的后端逻辑，在一个独立的线程中运行
     采用QTimer驱动的非阻塞模式，确保能及时响应UI信号
     """
-    # --- 信号定义 (保持不变) ---
+    # --- 信号定义  ---
     log_signal = pyqtSignal(str)
-    main_image_signal = pyqtSignal(object)
+    main_image_signal = pyqtSignal(dict)
     roi_image_signal = pyqtSignal(object)
     quality_map_signal = pyqtSignal(object)
     angle_map_signal = pyqtSignal(object)
@@ -27,14 +27,14 @@ class SystemBackend(QObject):
 
     def __init__(self):
         super().__init__()
-        # 标志位和任务管理 (保持不变)
+        # 标志位和任务管理
         self._is_paused_for_execution = False
         self.task_queue = []
         self.loop_task_prompt = None
         self.loop_task_remaining_count = 0
         self.initial_loop_count = 0
 
-        # 初始化所有组件 (保持不变)
+        # 初始化所有组件 
         self.camera = CameraHandler()
         self.arm = ArmController()
         self.gripper = GripperController()
@@ -44,9 +44,14 @@ class SystemBackend(QObject):
         self.transformer = CoordinateTransformer()
         self.parser = InstructionParser()
 
-        # 存储当前结果 (保持不变)
+        # 存储当前结果 
         self.final_grasp_pose_world = None
         self.current_target_selection_strategy = "置信度最高"
+
+        # 状态标志位
+        self.is_detection_enabled = False
+        self.is_grasp_enabled = False
+        self.current_text_prompt = "螺丝"  # 默认检测目标
 
         # --- 新增: 定时器将在工作线程中被创建和使用 ---
         self.timer = None
@@ -60,39 +65,106 @@ class SystemBackend(QObject):
         这个方法现在只负责初始化工作线程的环境
         它不再包含阻塞的 while 循环，而是创建一个QTimer来驱动周期性任务
         """
-        print("DEBUG: Backend 'run' method executed in thread. Setting up QTimer.")
-
         # 在工作线程中创建和启动 QTimer
         self.timer = QTimer()
         self.timer.timeout.connect(self.main_tick)
         self.timer.start(100)  # 每 100 毫秒 (10 FPS) 触发一次 main_tick
-
-        self.log_signal.emit(UILogger.info("后端线程已启动，事件循环正常运行"))
+        self.log_signal.emit(UILogger.info("后端线程已启动"))
 
     def main_tick(self):
-        """
-        由 QTimer 在工作线程中周期性调用的“心跳”函数
-        因为这不是一个阻塞循环，所以工作线程的事件循环可以自由地处理来自UI的信号
-        """
-        # --- 核心任务处理逻辑 ---
-        # 如果不处于等待用户点击“执行抓取”的状态，则检查是否有任务要处理
+        """由QTimer周期性调用的“心跳”函数。"""
+        # --- 任务处理逻辑 ---
         if not self._is_paused_for_execution:
+            # 用于处理自动抓取任务队列
             if self.loop_task_remaining_count > 0:
                 self.process_single_grasp_cycle(is_loop_task=True)
             elif self.task_queue:
                 self.process_single_grasp_cycle(is_loop_task=False)
 
-        # --- 持续更新视频流 ---
-        # 即使在暂停期间，视频流也应该持续更新
-        rgb_frame, _ = self.camera.get_frame()
-        if rgb_frame is not None:
-            self.main_image_signal.emit(rgb_frame)
+        # 持续更新视频流与可视化
+        rgb_frame, depth_frame = self.camera.get_frame()
+        if rgb_frame is None:
+            # 发送一个空帧的信号，避免UI卡住
+            self.main_image_signal.emit({'frame': None, 'detections': [], 'grasps': []})
+            return
+
+        display_data = {'frame': rgb_frame, 'detections': [], 'grasps': []}
+
+        # 根据UI开关状态执行相应逻辑
+        if self.is_detection_enabled:
+            detections = self.detector.detect(rgb_frame, self.current_text_prompt)
+            display_data['detections'] = detections
+
+            if self.is_grasp_enabled and detections:
+                target_bbox, _ = self.select_target(detections, depth_frame)
+                grasps_for_display = self._get_grasp_predictions_from_roi(rgb_frame, depth_frame, target_bbox)
+                display_data['grasps'] = grasps_for_display
+
+        elif self.is_grasp_enabled:
+            # 仅开启抓取预测，则对全图进行操作
+            h, w = rgb_frame.shape[:2]
+            full_image_bbox = (0, 0, w, h)
+            grasps_for_display = self._get_grasp_predictions_from_roi(rgb_frame, depth_frame, full_image_bbox)
+            display_data['grasps'] = grasps_for_display
+
+        self.main_image_signal.emit(display_data)
+
+    def _get_grasp_predictions_from_roi(self, full_rgb, full_depth, detection_bbox):
+        """从一个检测框ROI中，提取抓取区域，进行预测，并返回在原图坐标系下的抓取结果。"""
+        img_h, img_w = full_rgb.shape[:2]
+
+        x1, y1, x2, y2 = detection_bbox
+        cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+        w, h = x2 - x1, y2 - y1
+        side_length = int(max(w, h, 224))
+
+        grasp_region_x1 = int(cx - side_length / 2)
+        grasp_region_y1 = int(cy - side_length / 2)
+
+        # 边界检查
+        grasp_region_x1 = np.clip(grasp_region_x1, 0, img_w - side_length)
+        grasp_region_y1 = np.clip(grasp_region_y1, 0, img_h - side_length)
+        grasp_region_x2 = grasp_region_x1 + side_length
+        grasp_region_y2 = grasp_region_y1 + side_length
+
+        grasp_crop_rgb = full_rgb[grasp_region_y1:grasp_region_y2, grasp_region_x1:grasp_region_x2]
+        grasp_crop_depth = full_depth[grasp_region_y1:grasp_region_y2,
+                           grasp_region_x1:grasp_region_x2] if full_depth is not None else None
+
+        if grasp_crop_rgb.size == 0:
+            return []
+
+        # 预测 (GraspModel.predict 内部应处理缩放)
+        # 这里假设 GraspModel.predict 返回 (grasps, q_img, ang_img, width_img)
+        # 且返回的 grasps 坐标是相对于它接收的图像 (grasp_crop_rgb)
+        grasps_in_crop, q_img, ang_img, width_img = self.grasper.predict(grasp_crop_rgb, grasp_crop_depth)
+
+        self.quality_map_signal.emit(q_img)
+        self.angle_map_signal.emit(ang_img)
+        self.width_map_signal.emit(width_img)
+        self.roi_image_signal.emit(grasp_crop_rgb)
+
+        final_grasps = []
+        for g in grasps_in_crop:
+            # 直接将抓取矩形的四个点加上偏移即可
+            points_in_crop = g.as_gr.points
+            points_in_full_img = points_in_crop.copy()
+            points_in_full_img[:, 0] += grasp_region_y1  # Y 偏移
+            points_in_full_img[:, 1] += grasp_region_x1  # X 偏移
+
+            # 假设 g 对象有 quality 属性
+            quality = q_img[int(g.center[0]), int(g.center[1])] if hasattr(g, 'center') else 0.9  # 示例
+
+            final_grasps.append({
+                'points': points_in_full_img.tolist(),
+                'quality': quality
+            })
+        return final_grasps
 
     # ============================================================================
-    # 任务处理和槽函数 (这部分代码几乎完全不变)
+    # 任务处理和槽函数
     # ============================================================================
     def process_single_grasp_cycle(self, is_loop_task):
-        # ... (此函数的内部逻辑完全无需改动)
         if is_loop_task:
             task_prompt = self.loop_task_prompt
             log_prefix = f"任务 {self.initial_loop_count - self.loop_task_remaining_count + 1}/{self.initial_loop_count}"
@@ -146,7 +218,16 @@ class SystemBackend(QObject):
         return max(detections, key=lambda x: x[1])
 
     # --- 槽函数 (Slots) ---
-    # 这些函数现在可以被工作线程的事件循环正确地调用了
+    @pyqtSlot(bool)
+    def set_detection_enabled(self, enabled):
+        self.is_detection_enabled = enabled
+        self.log_signal.emit(UILogger.info(f"目标识别已 {'开启' if enabled else '关闭'}"))
+
+    @pyqtSlot(bool)
+    def set_grasp_enabled(self, enabled):
+        self.is_grasp_enabled = enabled
+        self.log_signal.emit(UILogger.info(f"抓取预测已 {'开启' if enabled else '关闭'}"))
+
     @pyqtSlot()
     def connect_camera(self):
         print("DEBUG: connect_camera slot has been successfully triggered!")
@@ -163,43 +244,40 @@ class SystemBackend(QObject):
 
     @pyqtSlot()
     def disconnect_camera(self):
-        self.camera.disconnect();
-        self.device_connection_signal.emit("cam", False);
-        self.log_signal.emit(
-            UILogger.info("相机已断开"))
+        self.camera.disconnect()
+        self.device_connection_signal.emit("cam", False)
+        self.log_signal.emit(UILogger.info("相机已断开"))
 
     @pyqtSlot()
     def connect_arm(self):
-        ok = self.arm.connect("192.168.1.11");
-        self.device_connection_signal.emit("arm", ok);
-        self.log_signal.emit(
-            UILogger.success("机械臂连接成功") if ok else UILogger.error("机械臂连接失败"))
+        ok = self.arm.connect("192.168.1.11")
+        self.device_connection_signal.emit("arm", ok)
+        self.log_signal.emit(UILogger.success("机械臂连接成功") if ok else UILogger.error("机械臂连接失败"))
 
     @pyqtSlot()
     def disconnect_arm(self):
-        self.arm.disconnect();
-        self.device_connection_signal.emit("arm", False);
+        self.arm.disconnect()
+        self.device_connection_signal.emit("arm", False)
         self.log_signal.emit(
             UILogger.info("机械臂已断开"))
 
     @pyqtSlot()
     def connect_gripper(self):
-        ok = self.gripper.connect("EC:XX:XX:XX:XX");
-        self.device_connection_signal.emit("gripper",
-                                           ok);
+        ok = self.gripper.connect("EC:XX:XX:XX:XX")
+        self.device_connection_signal.emit("gripper", ok)
         self.log_signal.emit(
             UILogger.success("夹爪连接成功") if ok else UILogger.error("夹爪连接失败"))
 
     @pyqtSlot()
     def disconnect_gripper(self):
-        self.gripper.disconnect();
-        self.device_connection_signal.emit("gripper", False);
+        self.gripper.disconnect()
+        self.device_connection_signal.emit("gripper", False)
         self.log_signal.emit(
             UILogger.info("夹爪已断开"))
 
     @pyqtSlot(str)
     def set_selection_strategy(self, strategy):
-        self.current_target_selection_strategy = strategy;
+        self.current_target_selection_strategy = strategy
         self.log_signal.emit(
             UILogger.info(f"目标选择策略已更改为: {strategy}"))
 
@@ -208,14 +286,20 @@ class SystemBackend(QObject):
         self.stop_all_tasks()
         self.log_signal.emit(UILogger.system(f"收到指令: '{text}'"))
         tasks = self.parser.parse(text)
-        if not tasks: self.log_signal.emit(UILogger.error("指令解析失败")); return
+        if not tasks:
+            self.log_signal.emit(UILogger.error("指令解析失败"))
+            return
+        # 更新当前检测文本，即使在非任务模式下也生效
+        self.current_text_prompt = tasks[0].get('prompt', 'object')
+        self.log_signal.emit(UILogger.info(f"当前识别目标已设为: '{self.current_text_prompt}'"))
+
         if tasks[0].get('quantity') == 'all':
             rgb, _ = self.camera.get_frame()
             detections = self.detector.detect(rgb, tasks[0]['prompt'])
             count = len(detections)
             if count > 0:
-                self.loop_task_prompt = tasks[0]['prompt'];
-                self.loop_task_remaining_count = count;
+                self.loop_task_prompt = tasks[0]['prompt']
+                self.loop_task_remaining_count = count
                 self.initial_loop_count = count
                 self.log_signal.emit(UILogger.success(f"扫描到 {count} 个目标，循环任务已启动"))
             else:

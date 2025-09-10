@@ -372,8 +372,8 @@ class GenerativeResnet(GraspModel):
         # ===  5. 特征融合模块 (按需创建) ===
         if use_unet or use_fpn:
             if use_aff:
-                self.fusion1 = AdaptiveFeatureFusion(...)
-                self.fusion2 = AdaptiveFeatureFusion(...)
+                self.fusion1 = AdaptiveFeatureFusion(cs * 2)
+                self.fusion2 = AdaptiveFeatureFusion(cs)
             else:
                 self.fusion1 = self._simple_fusion
                 self.fusion2 = self._simple_fusion

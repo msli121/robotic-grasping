@@ -90,4 +90,27 @@ STYLE_SHEET = """
         max-width: 16px;
         border-radius: 8px; /* 圆形 */
     }
+    
+    /* 复选框 */
+    QCheckBox {
+        color: #ECEFF4; /* 文本颜色设为浅灰白色 */
+        font-size: 14px;
+        spacing: 5px; /* 图标和文本之间的间距 */
+    }
+    QCheckBox::indicator {
+        width: 15px;
+        height: 15px;
+    }
+    QCheckBox::indicator::unchecked {
+        background-color: #4C566A; /* 未选中时的背景色 */
+        border: 1px solid #D8DEE9;
+        border-radius: 3px; /* 方形带圆角 */
+    }
+    QCheckBox::indicator::checked {
+        background-color: #88C0D0; /* 选中时变蓝色 */
+        border: 1px solid #D8DEE9;
+        border-radius: 3px; /* 方形带圆角 */
+        /* 可选: 添加一个勾选的图像来美化 */
+        /* image: url(./icons/check-mark.png); */
+    }
 """

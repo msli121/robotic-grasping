@@ -20,7 +20,7 @@ logging.basicConfig(level=logging.INFO)
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Evaluate network')
-    default_net_path = r'D:\PycharmProjects\robotic-grasping\logs\20250907_1739_training_cornell_grconvnet_goa_aff\best_iou_epoch_16_iou_0.9492'
+    default_net_path = r'D:\PycharmProjects\robotic-grasping\logs\20250908_1202_training_Jacquard_300_goanet_unet\best_model_epoch_05_iou_0.8675.pth'
     parser.add_argument('--network', type=str, default=default_net_path,
                         help='Path to saved network to evaluate')
     parser.add_argument('--use-depth', type=int, default=1,

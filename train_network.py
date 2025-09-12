@@ -456,8 +456,7 @@ def run():
                 if f.startswith('best_model'):
                     os.remove(os.path.join(save_folder, f))
             # 保存 state_dict 是更好的实践
-            torch.save(net.state_dict(),
-                       os.path.join(save_folder, f'best_model_epoch_{epoch + 1:02d}_iou_{iou:.4f}.pth'))
+            torch.save(net, os.path.join(save_folder, f'best_model_epoch_{epoch + 1:02d}_iou_{iou:.4f}.pth'))
             patience_counter = 0  # 只要有进步，耐心就重置
         else:
             patience_counter += 1
@@ -465,8 +464,7 @@ def run():
         # 保存周期性 checkpoint (可选)
         if epoch % 5 == 0:
             logging.info(f"Epoch {epoch + 1}/{args.epochs} - Checkpoint saved")
-            torch.save(net.state_dict(),
-                       os.path.join(save_folder, f'checkpoint_epoch_{epoch + 1:02d}_iou_{iou:.4f}.pth'))
+            torch.save(net, os.path.join(save_folder, f'checkpoint_epoch_{epoch + 1:02d}_iou_{iou:.4f}.pth'))
 
         # 检查是否需要提前停止
         if patience_counter >= args.early_stop_patience:

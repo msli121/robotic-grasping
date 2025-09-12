@@ -61,16 +61,16 @@ class DrawingUtils:
             painter.setPen(DrawingUtils.DETECTION_PEN)
             painter.drawRect(rect)
 
-            text = f"{label} ({score:.2f})"
+            text = f"{label}:{score:.2f}"
             painter.setFont(DrawingUtils.LABEL_FONT)
 
             text_rect = painter.fontMetrics().boundingRect(text)
             p_top_left = QPointF(int(x1), int(y1) - text_rect.height() - 2).toPoint()
             text_rect.moveTopLeft(p_top_left)
 
-            painter.setBrush(QColor(46, 52, 64, 180))  # 半透明背景
-            painter.setPen(Qt.NoPen)
-            painter.drawRect(text_rect.adjusted(-2, -2, 2, 2))
+            # painter.setBrush(QColor(46, 52, 64, 180))  # 半透明背景
+            # painter.setPen(Qt.NoPen)
+            # painter.drawRect(text_rect.adjusted(-2, -2, 2, 2))
 
             painter.setPen(DrawingUtils.TEXT_PEN)
             painter.drawText(text_rect, Qt.AlignCenter, text)
@@ -83,7 +83,8 @@ class DrawingUtils:
         for grasp in grasps:
             points_yx = grasp.get('points')  # 后端传来的是 (y, x) 顺序
             quality = grasp.get('quality', 0.0)
-            if not points_yx or len(points_yx) != 4: continue
+            if not points_yx or len(points_yx) != 4:
+                continue
 
             # 关键：将 (y, x) 转换为 QPointF(x, y)
             q_points = [QPointF(p[1], p[0]) for p in points_yx]

@@ -3,19 +3,16 @@
 # @File       : train_yoloe.py
 # @Description:
 import json
-import random
 import time
 import traceback
 
 import cv2
-import numpy as np
 from ultralytics import YOLOE
 from ultralytics.models.yolo.yoloe import YOLOEPETrainer
 
 from hardware.camera import RealSenseCamera
 
-
-def train_yoloe():
+def train_yoloe_by_fine_tuning():
     # Initialize a detection model from a config
     # yaml_config = r'D:\PycharmProjects\robotic-grasping\yolo\model_config\yoloe-v8s.yaml'
     yaml_config = r'D:\PycharmProjects\robotic-grasping\yolo\model_config\yoloe-11.yaml'
@@ -73,7 +70,6 @@ def train_yoloe():
     print(f"--------------------------")
     print(f"Best model saved at: {summary['best_model_path']}")
     print(f"Training summary saved to: {summary_path}")
-
 
 
 def predict_yoloe():

@@ -8,6 +8,7 @@ import time
 
 import cv2
 import numpy as np
+import yaml
 
 from grasp_predictor import GraspPredictor
 from hardware.camera import RealSenseCamera
@@ -168,12 +169,12 @@ class DetectionModel:
             model_path = r"D:\PycharmProjects\robotic-grasping\yolov8\runs\detect\train3\weights\best.pt"
         self.model_type = model_type
         self.model_path = model_path
+        self.detector = None
         logger.info(f"[DetectionModel] [{model_type}] Loading detection model from {model_path}")
-        if model_path is None:
-            raise Exception("Model path is None")
-        if self.model_type == 'yolo':
-            self.detector = YOLOv8_Detector(model_path)
-            self.detector.load_model()
+        if model_path and os.path.exists(model_path):
+            if self.model_type == 'yolo':
+                self.detector = YOLOv8_Detector(model_path)
+                self.detector.load_model()
 
     def detect(self, image: np.ndarray, text_prompt: str, threshold=0.5) -> list:
         """
@@ -196,8 +197,6 @@ class GraspModel:
     def __init__(self, model_path=None):
         if model_path is None:
             self.model_path = r'D:\PycharmProjects\robotic-grasping\trained-models\cornell-randsplit-rgbd-grconvnet3-drop1-ch32\epoch_19_iou_0.98'
-        if not os.path.exists(self.model_path):
-            raise Exception(f"Grasp Model file not found at {self.model_path}")
         self.grasp_predictor = GraspPredictor(self.model_path, output_size=224)
         self.grasp_predictor.load_model()
 
@@ -297,27 +296,171 @@ class CoordinateTransformer:
 
 
 class InstructionParser:
-    """中文指令解析器的占位符"""
+    """
+    中文指令解析器
+    - 在闭集模式下，严格要求指令中包含已知的核心实体。
+    - 在开放词汇模式下，更具灵活性。
+    """
 
-    def parse(self, text):
-        # TODO: 实现我们之前讨论的、更强大的基于关键词的解析器
-        logger.info(f"[中文指令解析] Parsing instruction: '{text}'")
-        tasks = [
-            {'prompt': text.strip()},
-        ]
-        return tasks
-        # if "所有" in text or "全部" in text:
-        #     prompt = "bolt"  # 简化处理，假设是bolt
-        #     return [{'prompt': prompt, 'quantity': 'all'}]
-        # else:
-        #     # 简化处理
-        #     tasks = []
-        #     sub_commands = text.replace("，", ",").split(",")
-        #     for cmd in sub_commands:
-        #         if "红" in cmd:
-        #             tasks.append({'prompt': 'red block'})
-        #         elif "蓝" in cmd:
-        #             tasks.append({'prompt': 'blue ball'})
-        #         else:
-        #             tasks.append({'prompt': 'object'})  # 默认
-        #     return tasks
+    def __init__(self, vocab_path="./vocab.yaml"):
+        try:
+            with open(vocab_path, 'r', encoding='utf-8') as f:
+                self.vocab = yaml.safe_load(f)
+        except FileNotFoundError:
+            raise FileNotFoundError(f"词典文件未找到: {vocab_path}！请检查路径。")
+        self.class_map_zh_to_en = {k: v for k, v in self.vocab['class_map'].items()}
+        self.class_map_en_to_zh = {v: k for k, v in self.vocab['class_map'].items()}
+
+        self.class_map_en_to_id = {v: i for i, v in enumerate(self.vocab['class_map'].values())}
+        self.class_map_zh_to_id = {k: i for i, k in enumerate(self.vocab['class_map'].keys())}
+
+    def parse(self, text: str, mode: str) -> dict:
+        """
+        解析用户输入的中文文本，生成一个结构化的查询计划
+        :param text: 用户输入的中文文本
+        :param mode: 解析模式，'closed_set' 或 'open_vocab'
+        :return: 结构化的查询计划字典
+        """
+        plan = {"mode": mode, "prompt": "", "class_id_filter": None, "constraints": []}
+        original_text = text
+
+        target_entity_zh, target_entity_en = None, None
+        attributes_en = []
+
+        # 1. 提取核心实体
+        for zh, en in self.vocab['class_map'].items():
+            if zh in text:
+                target_entity_zh, target_entity_en = zh, en
+                text = text.replace(zh, "")  # 移除已处理的核心词
+                break
+
+        # 2. 核心实体存在性检查 (根据模式)
+        if not target_entity_en:
+            if mode == 'closed_set':
+                print(f"解析失败: 在闭集模式下，指令 '{original_text}' 中未找到已知的核心物体。")
+                return None
+            else:  # open_vocab 模式
+                # 将清理后的整个指令作为prompt
+                plan['prompt'] = original_text.replace("的", "").replace("抓取", "").strip()
+                # 开放模式下也需要解析约束
+                self._extract_constraints(original_text, plan)
+                return plan
+
+        # 3. 提取属性
+        for attr_type, attr_dict in self.vocab['attributes'].items():
+            for zh, en in attr_dict.items():
+                if zh in text:
+                    attributes_en.append(en)
+                    # 属性也作为一种约束加入，用于后处理
+                    plan['constraints'].append({"type": attr_type, "value": en})
+
+        # 4. 构建 Prompt 和 Class ID Filter
+        if mode == 'closed_set':
+            plan['prompt'] = target_entity_en  # Prompt 只是核心实体
+            plan['class_id_filter'] = self.class_map_en_to_id.get(target_entity_en)
+        else:  # open_vocab
+            # Prompt 是属性和实体的组合
+            prompt_parts = attributes_en + [target_entity_en]
+            plan['prompt'] = " ".join(prompt_parts)
+
+        # 5. 提取约束
+        self._extract_constraints(original_text, plan)
+
+        return plan
+
+    def _extract_constraints(self, text, plan):
+        """辅助函数，用于从文本中提取约束。"""
+        for const_type, const_dict in self.vocab['constraints'].items():
+            for zh, en in const_dict.items():
+                if zh in text:
+                    plan['constraints'].append({"type": const_type, "value": en})
+
+
+class PostProcessor:
+    """
+    智能决策模块
+    - 根据查询计划中的约束，从多个检测结果中筛选出唯一的目标。
+    """
+
+    def select_best_target(self, detections: list, constraints: list, rgb_image: np, depth_image: np = None):
+        """
+        应用约束，筛选最佳目标
+        :param detections: 检测结果列表，每个元素是一个字典，包含 'bbox', 'score', 'class_id' 等。
+        :param constraints: 查询计划中的约束列表，每个元素是一个字典，包含 'type' 和 'value'。
+        :param rgb_image: 输入的 RGB 图像，用于颜色筛选。
+        :param depth_image: 可选的深度图，用于位置筛选。
+        :return: 最佳目标的检测字典，或 None。
+        """
+        candidates = detections.copy()
+
+        # --- 颜色筛选 ---
+        # 颜色约束
+        color_constraint = next((c for c in constraints if c['type'] == 'color'), None)
+        if color_constraint:
+            color_to_find = color_constraint['value']
+            candidates = [d for d in candidates if self._is_color_dominant(d['bbox'], rgb_image, color_to_find)]
+
+        if not candidates: return None
+
+        # --- 应用排序型约束 (尺寸、位置) 排序找到最优 ---
+        # 尺寸约束
+        size_constraint = next((c for c in constraints if c['type'] == 'size'), None)
+        if size_constraint:
+            is_largest = size_constraint['value'] == 'largest'
+            candidates.sort(key=lambda d: self._get_bbox_area(d['bbox']), reverse=is_largest)
+            return candidates[0]  # 尺寸约束具有最高优先级，直接返回结果
+
+        # 位置约束
+        pos_constraint = next((c for c in constraints if c['type'] == 'position'), None)
+        if pos_constraint:
+            if pos_constraint['value'] == 'leftmost':
+                # 按 bbox 中心 x 坐标排序
+                candidates.sort(key=lambda d: (d['bbox'][0] + d['bbox'][2]) / 2)
+                return candidates[0]
+            elif pos_constraint['value'] == 'rightmost':
+                # 按 bbox 中心 x 坐标排序
+                candidates.sort(key=lambda d: (d['bbox'][0] + d['bbox'][2]) / 2, reverse=True)
+                return candidates[0]
+            elif pos_constraint['value'] == 'topmost':
+                # 按 bbox 中心 y 坐标排序
+                candidates.sort(key=lambda d: (d['bbox'][1] + d['bbox'][3]) / 2)
+                return candidates[0]
+            elif pos_constraint['value'] == 'bottommost':
+                # 按 bbox 中心 y 坐标排序
+                candidates.sort(key=lambda d: (d['bbox'][1] + d['bbox'][3]) / 2, reverse=True)
+                return candidates[0]
+            elif pos_constraint['value'] == 'middle':
+                # 按 bbox 中心 x 坐标排序
+                candidates.sort(key=lambda d: (d['bbox'][0] + d['bbox'][2]) / 2)
+                return candidates[len(candidates) // 2]
+            elif pos_constraint['value'] == 'nearest':
+                # 按3D距离排序
+                candidates.sort(key=lambda d: self._get_3d_distance(d['bbox'], depth_image))
+                return candidates[0]
+
+        # 如果没有排序型约束，则默认返回置信度最高的
+        candidates.sort(key=lambda d: d['score'], reverse=True)
+        return candidates[0]
+
+    # --- 辅助函数 ---
+    def _get_bbox_area(self, bbox):
+        x1, y1, x2, y2 = bbox
+        return (x2 - x1) * (y2 - y1)
+
+    def _is_color_dominant(self, bbox, image, color_name):
+        """一个简化的颜色检查函数 (占位符)。"""
+        # TODO: 实现更鲁棒的颜色检测逻辑
+        # 例如: 裁剪ROI -> 转换到HSV空间 -> 计算颜色直方图 -> 判断主色调
+        print(f"Checking if dominant color is '{color_name}' in bbox {bbox} (Not Implemented)")
+        return True  # 暂时总是返回 True
+
+    def _get_3d_distance(self, bbox, depth_map):
+        """计算 bbox 中心的3D距离 (占位符)。"""
+        # TODO: 需要相机内参才能实现
+        # 1. 计算 bbox 中心点 (u, v)
+        # 2. 从 depth_map 获取深度 Z
+        # 3. (u, v, Z) -> (Xc, Yc, Zc) (相机坐标)
+        # 4. 返回 sqrt(Xc^2 + Yc^2 + Zc^2)
+        print(f"Calculating 3D distance for bbox {bbox} (Not Implemented)")
+        # 暂时用2D面积作为替代来模拟排序
+        return -self._get_bbox_area(bbox)

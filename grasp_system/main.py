@@ -1,4 +1,3 @@
-
 import sys
 import cv2
 import numpy as np
@@ -105,6 +104,8 @@ class MainWindow(QMainWindow):
         cp.strategy_signal.connect(self.backend.set_selection_strategy)
         cp.execute_grasp_signal.connect(self.backend.execute_grasp)
         cp.stop_signal.connect(self.backend.stop_all_tasks)
+        # --- 新增: 连接模式切换信号 ---
+        cp.mode_changed_signal.connect(self.backend.set_mode)
         self.cleanup_signal.connect(self.backend.cleanup)
 
         cp.detection_toggle_signal.connect(self.backend.set_detection_enabled)

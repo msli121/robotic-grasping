@@ -1,14 +1,16 @@
-# ui_components.py
-
-from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
+from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt
+from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
                              QTextEdit, QComboBox, QRadioButton, QButtonGroup,
                              QFrame, QGridLayout, QSizePolicy, QCheckBox)
-from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt
 
 
 class ControlPanel(QFrame):
-    """左侧控制面板, 只负责UI元素的创建和布局, 通过信号向外发送用户操作。"""
-    # 定义发出的信号
+    """
+    左侧控制面板, 只负责UI元素的创建和布局, 通过信号向外发送用户操作。
+    将模式切换升级为功能更明确的“识别模式”切换。
+    """
+    # --- 定义发出的信号 ---
+    # 设备控制
     connect_camera_signal = pyqtSignal()
     disconnect_camera_signal = pyqtSignal()
     connect_arm_signal = pyqtSignal()
@@ -16,30 +18,32 @@ class ControlPanel(QFrame):
     connect_gripper_signal = pyqtSignal()
     disconnect_gripper_signal = pyqtSignal()
 
-    instruction_signal = pyqtSignal(str)
-    strategy_signal = pyqtSignal(str)
-    execute_grasp_signal = pyqtSignal()
-    stop_signal = pyqtSignal()
-
-    # 识别和抓取开关信号
+    # 功能开关
     detection_toggle_signal = pyqtSignal(bool)
     grasp_toggle_signal = pyqtSignal(bool)
+
+    # 任务控制
+    mode_changed_signal = pyqtSignal(str)  # 发射模式名称: "open_vocab" 或 "closed_set"
+    instruction_signal = pyqtSignal(str)
+    strategy_signal = pyqtSignal(str)
+
+    # 执行控制
+    execute_grasp_signal = pyqtSignal()
+    stop_signal = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFrameShape(QFrame.StyledPanel)
         self._init_ui()
         self._setup_connections()
-        self.update_mode_ui()
 
     def _init_ui(self):
+        """初始化所有UI元素并进行布局。"""
         layout = QVBoxLayout(self)
 
-        # 设备连接
+        # 创建并添加各个功能区域的框架
         device_frame = self._create_device_frame()
-        # 任务控制
         task_frame = self._create_task_frame()
-        # 执行控制
         exec_frame = self._create_exec_frame()
 
         layout.addWidget(device_frame)
@@ -50,6 +54,7 @@ class ControlPanel(QFrame):
         layout.addStretch(4)
 
     def _create_device_frame(self):
+        """创建设备连接区域。"""
         frame = QFrame()
         layout = QVBoxLayout(frame)
         layout.addWidget(QLabel("<b>设备连接</b>"))
@@ -61,11 +66,12 @@ class ControlPanel(QFrame):
         return frame
 
     def _create_task_frame(self):
+        """创建任务控制区域。"""
         frame = QFrame()
         layout = QVBoxLayout(frame)
         layout.addWidget(QLabel("<b>任务控制</b>"))
 
-        # --- 新增功能开关 ---
+        # 功能开关
         layout.addWidget(QLabel("功能开关:"))
         self.enable_detection_cb = QCheckBox("开启目标识别")
         self.enable_grasp_cb = QCheckBox("开启抓取预测")
@@ -75,32 +81,37 @@ class ControlPanel(QFrame):
         switch_hbox.addWidget(self.enable_detection_cb)
         switch_hbox.addWidget(self.enable_grasp_cb)
         layout.addLayout(switch_hbox)
-        # --- 结束 ---
 
-        self.auto_mode_radio = QRadioButton("自动模式")
-        self.inst_mode_radio = QRadioButton("指令模式")
+        # --- 核心改动: 替换为“识别模式”切换 ---
+        layout.addWidget(QLabel("识别模式:"))
+        self.open_vocab_radio = QRadioButton("开放词汇 (灵活)")
+        self.closed_set_radio = QRadioButton("闭集专家 (高精度)")
         self.mode_group = QButtonGroup()
-        self.mode_group.addButton(self.auto_mode_radio)
-        self.mode_group.addButton(self.inst_mode_radio)
-        self.inst_mode_radio.setChecked(True)
+        self.mode_group.addButton(self.open_vocab_radio)
+        self.mode_group.addButton(self.closed_set_radio)
+        self.closed_set_radio.setChecked(True)  # 默认使用高精度的闭集模式
+
         mode_hbox = QHBoxLayout()
-        mode_hbox.addWidget(self.auto_mode_radio)
-        mode_hbox.addWidget(self.inst_mode_radio)
+        mode_hbox.addWidget(self.open_vocab_radio)
+        mode_hbox.addWidget(self.closed_set_radio)
         layout.addLayout(mode_hbox)
+        # --- 结束改动 ---
+
         layout.addWidget(QLabel("目标选择策略:"))
         self.strategy_combo = QComboBox()
         self.strategy_combo.addItems(["置信度最高", "抓取最近的", "从左到右"])
         layout.addWidget(self.strategy_combo)
-        self.auto_mode_button = QPushButton("开始/停止 自动模式")
+
+        layout.addWidget(QLabel("文本指令:"))
         self.instruction_text = QTextEdit()
         self.instruction_text.setPlaceholderText("在此输入指令...")
         self.send_inst_button = QPushButton("发送指令")
-        layout.addWidget(self.auto_mode_button)
         layout.addWidget(self.instruction_text)
         layout.addWidget(self.send_inst_button)
         return frame
 
     def _create_exec_frame(self):
+        """创建执行控制区域。"""
         frame = QFrame()
         layout = QVBoxLayout(frame)
         self.execute_button = QPushButton("执行抓取")
@@ -111,6 +122,7 @@ class ControlPanel(QFrame):
         return frame
 
     def _create_device_row(self, grid_layout, row, name):
+        """辅助函数，用于创建一行设备控制UI。"""
         label = QLabel(name)
         indicator = QLabel()
         indicator.setObjectName("status_indicator")
@@ -126,6 +138,7 @@ class ControlPanel(QFrame):
         return indicator, (conn_btn, disconn_btn)
 
     def _setup_connections(self):
+        """连接所有UI元素的信号到此类定义的信号上。"""
         # 设备连接
         self.cam_btns[0].clicked.connect(self.connect_camera_signal.emit)
         self.cam_btns[1].clicked.connect(self.disconnect_camera_signal.emit)
@@ -133,27 +146,31 @@ class ControlPanel(QFrame):
         self.arm_btns[1].clicked.connect(self.disconnect_arm_signal.emit)
         self.gripper_btns[0].clicked.connect(self.connect_gripper_signal.emit)
         self.gripper_btns[1].clicked.connect(self.disconnect_gripper_signal.emit)
-        # 目标识别和抓取预测开关
+
+        # 功能开关
         self.enable_detection_cb.toggled.connect(self.detection_toggle_signal.emit)
         self.enable_grasp_cb.toggled.connect(self.grasp_toggle_signal.emit)
+
         # 任务控制
-        self.mode_group.buttonClicked.connect(self.update_mode_ui)
+        self.mode_group.buttonClicked.connect(self._on_mode_changed)  # 连接到内部槽
         self.send_inst_button.clicked.connect(lambda: self.instruction_signal.emit(self.instruction_text.toPlainText()))
         self.strategy_combo.currentTextChanged.connect(self.strategy_signal.emit)
+
         # 执行控制
         self.execute_button.clicked.connect(self.execute_grasp_signal.emit)
         self.stop_button.clicked.connect(self.stop_signal.emit)
 
     @pyqtSlot()
-    def update_mode_ui(self):
-        is_inst_mode = self.inst_mode_radio.isChecked()
-        self.strategy_combo.setEnabled(is_inst_mode)
-        self.instruction_text.setVisible(is_inst_mode)
-        self.send_inst_button.setVisible(is_inst_mode)
-        self.auto_mode_button.setVisible(not is_inst_mode)
+    def _on_mode_changed(self):
+        """内部槽函数，用于发射带有模式名称字符串的信号。"""
+        if self.open_vocab_radio.isChecked():
+            self.mode_changed_signal.emit("open_vocab")
+        else:
+            self.mode_changed_signal.emit("closed_set")
 
     @pyqtSlot(str, bool)
     def update_device_status(self, device, is_connected):
+        """槽函数，用于更新设备状态UI。"""
         status_indicator, (conn_btn, disconn_btn) = {
             "cam": (self.cam_status, self.cam_btns),
             "arm": (self.arm_status, self.arm_btns),
@@ -161,11 +178,12 @@ class ControlPanel(QFrame):
         }.get(device, (None, (None, None)))
 
         if status_indicator:
-            color = "#A3BE8C" if is_connected else "#BF616A"
+            color = "#A3BE8C" if is_connected else "#BF616A"  # 绿色/红色
             status_indicator.setStyleSheet(f"background-color: {color}")
             conn_btn.setEnabled(not is_connected)
             disconn_btn.setEnabled(is_connected)
 
+        # 联动逻辑: 只有相机连接后，功能开关才可用
         if device == "cam":
             self.enable_detection_cb.setEnabled(is_connected)
             self.enable_grasp_cb.setEnabled(is_connected)
@@ -181,7 +199,7 @@ class VisionLogPanel(QFrame):
         super().__init__(parent)
         self.setFrameShape(QFrame.StyledPanel)
         layout = QVBoxLayout(self)
-        self.main_video_label = QLabel("主视觉区")
+        self.main_video_label = QLabel("无视频流～～")
         self.main_video_label.setAlignment(Qt.AlignCenter)
         self.log_box = QTextEdit()
         self.log_box.setReadOnly(True)

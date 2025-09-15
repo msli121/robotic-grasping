@@ -9,7 +9,7 @@ import numpy as np
 from ultralytics import YOLO
 
 from hardware.camera import RealSenseCamera
-from yolov8.visualizer import Visualizer
+from yolo.visualizer import Visualizer
 
 logging.basicConfig(
     level=logging.INFO,
@@ -19,33 +19,18 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================================
-# 1. 策略定义
+# YOLOv8_Detector
 # ============================================================================
-class DetectionStrategy(ABC):
+class YOLOv8_Detector():
     def __init__(self, model_path):
-        if not os.path.exists(model_path):
-            raise FileNotFoundError(f"Model file not found at: {model_path}")
         self.model_path = model_path
         self.model = None
 
-    @abstractmethod
-    def load_model(self): pass
-
-    @abstractmethod
-    def detect(self, image: np.ndarray, **kwargs) -> list: pass
-
-
-# ============================================================================
-# 2. YOLOv8_Detector
-# ============================================================================
-class YOLOv8_Detector(DetectionStrategy):
-    def __init__(self, model_path):
-        super().__init__(model_path)
-
     def load_model(self):
         logger.info(f"Loading YOLOv8 model from: {self.model_path}")
-        self.model = YOLO(self.model_path)
-        logger.info("YOLOv8 model loaded successfully.")
+        if self.model_path and os.path.exists(self.model_path):
+            self.model = YOLO(self.model_path)
+            logger.info("YOLOv8 model loaded successfully.")
         return self.model
 
     def detect(self, image: np.ndarray, target_classes: list = None, threshold: float = 0.5) -> list:

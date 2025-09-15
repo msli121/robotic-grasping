@@ -84,7 +84,7 @@ STYLE_SHEET = """
         border-radius: 7px;
     }
 
-    /* 专门用于状态指示灯的QLabel */
+    /* 状态指示灯QLabel */
     QLabel#status_indicator {
         max-height: 16px;
         max-width: 16px;

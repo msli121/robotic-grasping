@@ -31,11 +31,12 @@ class GraspPredictor(object):
 
     def load_model(self):
         logger.info(f"Loading grasp predictor model from: {self.model_path}")
-        if not os.path.exists(self.model_path):
-            raise FileNotFoundError(f"Model file {self.model_path} does not exist")
-        self.model = torch.load(self.model_path)
-        logger.info("Grasp predictor model loaded successfully.")
-        self.device = get_device(False)
+        if  os.path.exists(self.model_path):
+            self.model = torch.load(self.model_path)
+            logger.info("Grasp predictor model loaded successfully.")
+            self.device = get_device(False)
+        else:
+            logger.error(f"Grasp model file {self.model_path} does not exist")
 
     def predict(self, rgb, depth, no_grasps=1):
         """

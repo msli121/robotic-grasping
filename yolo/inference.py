@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 
 import cv2
 import numpy as np
-from ultralytics import YOLO
+from ultralytics import YOLO, YOLOE
 
 from hardware.camera import RealSenseCamera
 from yolo.visualizer import Visualizer
@@ -19,9 +19,9 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================================
-# YOLOv8_Detector
+# YOLODetector
 # ============================================================================
-class YOLOv8_Detector():
+class YOLODetector():
     def __init__(self, model_path):
         self.model_path = model_path
         self.model = None
@@ -31,6 +31,8 @@ class YOLOv8_Detector():
         if self.model_path and os.path.exists(self.model_path):
             self.model = YOLO(self.model_path)
             logger.info("YOLOv8 model loaded successfully.")
+        else:
+            logger.error(f"YOLOv8 model file not found: {self.model_path}")
         return self.model
 
     def detect(self, image: np.ndarray, target_classes: list = None, threshold: float = 0.5) -> list:
@@ -74,7 +76,111 @@ class YOLOv8_Detector():
 
 
 # ============================================================================
-# 3. 独立验证函数
+# YOLODetector
+# ============================================================================
+class YOLOEDetector():
+    def __init__(self, model_path):
+        self.model_path = model_path
+        self.model = None
+
+    def load_model(self):
+        logger.info(f"Loading YOLOE model from: {self.model_path}")
+        if self.model_path and os.path.exists(self.model_path):
+            self.model = YOLOE(self.model_path)
+            logger.info("YOLOE model loaded successfully.")
+        else:
+            logger.error(f"YOLOE model file not found: {self.model_path}")
+        return self.model
+
+    def detect(self, image: np.ndarray, target_classes: list = None, threshold: float = 0.5) -> list:
+        """
+      对单张图像进行目标检测，并返回结构化的结果
+
+        :param image: 输入图像 (NumPy array, BGR或RGB格式)。
+        :param target_classes: (可选) 一个包含目标类别名称的列表，只返回这些类别的检测结果。
+                               如果为 None，则返回所有检测到的类别。
+        :param threshold: (可选) 置信度阈值，低于此值的检测结果将被忽略。
+        :return:  {'bbox': (x1, y1, x2, y2), 'score': float, 'class_id': int, 'class_name': str}
+        """
+        results = self.model.predict(image, verbose=False)
+        detections = []
+        if not results:
+            return detections
+
+        for r in results:
+            for box in r.boxes.cpu().numpy():
+                score = float(box.conf[0])
+                if score < threshold:
+                    continue
+
+                cls_id = int(box.cls[0])
+                cls_name = r.names[cls_id]
+
+                # 按目标类别过滤
+                if target_classes is not None and cls_name not in target_classes:
+                    continue
+
+                x1, y1, x2, y2 = map(int, box.xyxy[0])
+                detection_dict = {
+                    'bbox': (x1, y1, x2, y2),
+                    'score': score,
+                    'class_id': cls_id,
+                    'class_name': cls_name
+                }
+                detections.append(detection_dict)
+
+        return detections
+
+
+class YOLOETextPromptDetector():
+    def __init__(self, model_path):
+        self.model_path = model_path
+        self.model = None
+
+    def load_model(self):
+        logger.info(f"Loading YOLOE model from: {self.model_path}")
+        if self.model_path and os.path.exists(self.model_path):
+            self.model = YOLOE(self.model_path)
+            logger.info("YOLOE model loaded successfully.")
+        else:
+            logger.error(f"YOLOE model file not found: {self.model_path}")
+        return self.model
+
+    def detect(self, image: np.ndarray, target_classes: list = None, threshold: float = 0.5) -> list:
+        """
+        对单张图像进行目标检测，并返回结构化的结果
+
+        :param image: 输入图像 (NumPy array, BGR或RGB格式)。
+        :param target_classes: (可选) 一个包含目标类别名称的列表，只返回这些类别的检测结果。
+                               如果为 None，则返回所有检测到的类别。
+        :param threshold: (可选) 置信度阈值，低于此值的检测结果将被忽略。
+        :return:  {'bbox': (x1, y1, x2, y2), 'score': float, 'class_id': int, 'class_name': str}
+        """
+        self.model.set_classes(target_classes, self.model.get_text_pe(target_classes))
+        results = self.model.predict(image, verbose=False)
+        detections = []
+        if not results:
+            return detections
+        for r in results:
+            for box in r.boxes.cpu().numpy():
+                score = float(box.conf[0])
+                if score < threshold:
+                    continue
+                cls_id = int(box.cls[0])
+                cls_name = r.names[cls_id]
+                x1, y1, x2, y2 = map(int, box.xyxy[0])
+                detection_dict = {
+                    'bbox': (x1, y1, x2, y2),
+                    'score': score,
+                    'class_id': cls_id,
+                    'class_name': cls_name
+                }
+                detections.append(detection_dict)
+        return detections
+
+
+# ============================================================================
+# 独立验证函数
 # ============================================================================
 def visualize_camera_detection(model_path: str, font_path: str):
     """
@@ -88,7 +194,7 @@ def visualize_camera_detection(model_path: str, font_path: str):
     try:
         # 1. 初始化
         logger.info("Initializing components...")
-        detector = YOLOv8_Detector(model_path=model_path)
+        detector = YOLODetector(model_path=model_path)
         detector.load_model()
 
         visualizer = Visualizer(font_path=font_path)

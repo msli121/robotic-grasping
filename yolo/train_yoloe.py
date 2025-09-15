@@ -12,7 +12,8 @@ from ultralytics.models.yolo.yoloe import YOLOEPETrainer
 
 from hardware.camera import RealSenseCamera
 
-def train_yoloe_by_fine_tuning():
+
+def train_yoloe():
     # Initialize a detection model from a config
     # yaml_config = r'D:\PycharmProjects\robotic-grasping\yolo\model_config\yoloe-v8s.yaml'
     yaml_config = r'D:\PycharmProjects\robotic-grasping\yolo\model_config\yoloe-11.yaml'
@@ -74,10 +75,11 @@ def train_yoloe_by_fine_tuning():
 
 def predict_yoloe():
     # Initialize a YOLOE model
-    model = YOLOE(r"D:\PycharmProjects\robotic-grasping\yolo\runs\detect\train_yoloe_20250915_5\weights\best.pt")
+    # model = YOLOE(r"D:\PycharmProjects\robotic-grasping\yolo\runs\detect\train_yoloe_20250915_5\weights\best.pt")
+    model = YOLOE(r"D:\PycharmProjects\robotic-grasping\yolo\pretrained_models\yoloe-11s-seg.pt")
+    # model = YOLOE(r"D:\PycharmProjects\robotic-grasping\yolo\pretrained_models\yoloe-11s-seg-pf.pt")
     model.to('cuda:0')
     # Set text prompt to detect person and bus. You only need to do this once after you load the model.
-    names = ["螺丝", "螺丝刀", "弹簧"]
 
     camera = RealSenseCamera()
     camera.connect()
@@ -95,12 +97,87 @@ def predict_yoloe():
             bgr_frame = cv2.cvtColor(rgb_frame, cv2.COLOR_RGB2BGR)
 
             # inference
+            names = ["toothbrush", "crayon", "battery"]
             model.set_classes(names, model.get_text_pe(names))
             # model.set_classes(names)
-            results = model.predict(bgr_frame, conf=0.5)
+            results = model.predict(bgr_frame, conf=0.2)
 
             # visualize
+            # results[0].show()
             display_frame = results[0].plot()
+            cv2.imshow('YOLOE Real-time Inference', display_frame)
+
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+    except Exception as e:
+        traceback.print_exc()
+        print(f"An error occurred in the main loop: {e}")
+    finally:
+        cv2.destroyAllWindows()
+        camera.disconnect()
+
+
+def predict_yoloe_pf():
+    model = YOLOE(r"D:\PycharmProjects\robotic-grasping\yolo\pretrained_models\yoloe-11s-seg-pf.pt")
+    model.to('cuda:0')
+    camera = RealSenseCamera()
+    camera.connect()
+    print("Camera connected.")
+    print("\nStarting inference loop. Press 'q' in the window to quit.")
+
+    try:
+        while True:
+            img_info = camera.get_image_bundle()
+            rgb_frame = img_info.get('rgb')
+            if rgb_frame is None:
+                continue
+
+            # RGB -> BGR
+            bgr_frame = cv2.cvtColor(rgb_frame, cv2.COLOR_RGB2BGR)
+
+            # 创建一个副本用于绘制，避免在原始图像上修改
+            display_frame = bgr_frame.copy()
+
+            # 推理
+            results = model.predict(bgr_frame, conf=0.4)
+
+            # --- 手动绘制检测结果，替代 results[0].plot() ---
+            if results and results[0]:
+                # 获取类别名称
+                class_names = results[0].names
+                # 遍历每一个检测到的物体
+                for box in results[0].boxes:
+                    # 获取边界框坐标 (x1, y1, x2, y2)
+                    x1, y1, x2, y2 = map(int, box.xyxy[0])
+                    # 获取置信度
+                    confidence = box.conf[0]
+                    # 获取类别ID
+                    class_id = int(box.cls[0])
+                    # 定义颜色（这里用一个固定的颜色，也可以根据class_id生成不同颜色）
+                    color = (0, 255, 0)  # 绿色
+                    line_thickness = 2
+                    # 1. 绘制边界框
+                    cv2.rectangle(display_frame, (x1, y1), (x2, y2), color, line_thickness)
+                    # 2. 准备标签文字
+                    label = f'{class_names[class_id]} {confidence:.2f}'
+                    # 3. 为标签文字添加背景
+                    font = cv2.FONT_HERSHEY_SIMPLEX
+                    font_scale = 0.6
+                    font_thickness = 1
+                    # 获取文字的尺寸
+                    (text_width, text_height), baseline = cv2.getTextSize(label, font, font_scale, font_thickness)
+                    # 计算背景框的坐标
+                    label_bg_x2 = x1 + text_width
+                    label_bg_y2 = y1 - text_height - baseline
+
+                    # 绘制实心矩形作为背景
+                    cv2.rectangle(display_frame, (x1, y1), (label_bg_x2, label_bg_y2), color, -1)  # -1表示填充
+
+                    # 4. 绘制文字
+                    cv2.putText(display_frame, label, (x1, y1 - baseline), font, font_scale, (0, 0, 0),
+                                font_thickness)  # 黑色字体
+
+            # 显示优化后的图像
             cv2.imshow('YOLOE Real-time Inference', display_frame)
 
             if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -116,3 +193,4 @@ def predict_yoloe():
 if __name__ == '__main__':
     # train_yoloe()
     predict_yoloe()
+    # predict_yoloe_pf()

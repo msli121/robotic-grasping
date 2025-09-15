@@ -12,7 +12,7 @@ import yaml
 
 from grasp_predictor import GraspPredictor
 from hardware.camera import RealSenseCamera
-from yolo.inference import YOLOv8_Detector
+from yolo.inference import YOLODetector
 
 logging.basicConfig(
     level=logging.INFO,
@@ -166,14 +166,14 @@ class DetectionModel:
         :param model_type: 模型类型, 'yolo' 或 'yolo-world'
         """
         if model_path is None:
-            model_path = r"D:\PycharmProjects\robotic-grasping\yolov8\runs\detect\train3\weights\best.pt"
+            model_path = r"D:\PycharmProjects\robotic-grasping\yolo\runs\detect\train_yoloe_20250915_5\weights\best.pt"
         self.model_type = model_type
         self.model_path = model_path
         self.detector = None
         logger.info(f"[DetectionModel] [{model_type}] Loading detection model from {model_path}")
         if model_path and os.path.exists(model_path):
             if self.model_type == 'yolo':
-                self.detector = YOLOv8_Detector(model_path)
+                self.detector = YOLODetector(model_path)
                 self.detector.load_model()
 
     def detect(self, image: np.ndarray, text_prompt: str, threshold=0.5) -> list:

@@ -17,14 +17,15 @@ ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 def parse_args():
     """解析命令行参数"""
     parser = argparse.ArgumentParser(description="Train YOLOv8 on a custom dataset.")
-    parser.add_argument('--model-cfg', type=str, default='yolov8n.pt',
+    model_path = r'D:\PycharmProjects\robotic-grasping\yolov8\models\yolov8s.pt'
+    parser.add_argument('--model-cfg', type=str, default=model_path,
                         help='Starting model configuration, e.g., yolov8n.pt')
     parser.add_argument('--data-cfg', type=str, default=r'datasets/paper/dataset.yaml',
                         help='Path to dataset.yaml relative to the ROOT_DIR')
     parser.add_argument('--epochs', type=int, default=50, help='Number of training epochs')
     parser.add_argument('--batch-size', type=int, default=16, help='Batch size for training')
     parser.add_argument('--workers', type=int, default=0, help='Dataloader workers (0 for Windows is recommended)')
-    parser.add_argument('--name', type=str, default='train', help='Name for the training run directory')
+    parser.add_argument('--name', type=str, default='train_yolov8', help='Name for the training run directory')
     parser.add_argument('--save-period', type=int, default=10, help='Save checkpoint every X epochs')
     return parser.parse_args()
 
@@ -32,7 +33,7 @@ def parse_args():
 def train(args):
     """主训练函数"""
     # --- 1. 构造绝对路径 ---
-    model_config_path = os.path.join(ROOT_DIR, 'models', args.model_cfg)
+    model_config_path = args.model_cfg
     dataset_yaml_path = os.path.join(ROOT_DIR, args.data_cfg)
 
     # --- 2. 加载模型 ---
@@ -49,7 +50,7 @@ def train(args):
     print(f"Using dataset: {dataset_yaml_path}")
 
     # --- 3. 执行训练 ---
-    now_str = time.strftime("%Y%m%d_%H%M%S")
+    now_str = time.strftime("%Y%m%d")
     results = model.train(
         data=dataset_yaml_path,
         workers=args.workers,
@@ -57,7 +58,7 @@ def train(args):
         batch=args.batch_size,
         save=True,
         save_period=args.save_period,
-        name=f"{args.name}_{now_str}",
+        name=f"{args.name}_{now_str}_",
         exist_ok=True,  # 覆盖同名实验
 
         # # --- 数据增强组合 ---

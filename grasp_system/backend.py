@@ -40,7 +40,7 @@ class SystemBackend(QObject):
         self.gripper = GripperController()
         self.planner = RobotPlanner(self.arm, self.gripper)
         self.detector = DetectionModel()
-        self.grasper = GraspModel()
+        self.grasp_model = GraspModel()
         self.transformer = CoordinateTransformer()
         self.parser = InstructionParser()
 
@@ -92,20 +92,19 @@ class SystemBackend(QObject):
 
         # 根据UI开关状态执行相应逻辑
         if self.is_detection_enabled:
-            detections = self.detector.detect(rgb_frame, self.current_text_prompt)
+            detections = self.detector.detect(rgb_frame, self.current_text_prompt, threshold=0.2)
             display_data['detections'] = detections
 
             if self.is_grasp_enabled and detections:
-                target_bbox, _ = self.select_target(detections, depth_frame)
-                grasps_for_display = self._get_grasp_predictions_from_roi(rgb_frame, depth_frame, target_bbox)
-                display_data['grasps'] = grasps_for_display
+                target_detection = self.select_target(detections, depth_frame)
+                display_data['grasps'] = self._get_grasp_predictions_from_roi(rgb_frame, depth_frame,
+                                                                              target_detection.get('bbox'))
 
         elif self.is_grasp_enabled:
             # 仅开启抓取预测，则对全图进行操作
             h, w = rgb_frame.shape[:2]
             full_image_bbox = (0, 0, w, h)
-            grasps_for_display = self._get_grasp_predictions_from_roi(rgb_frame, depth_frame, full_image_bbox)
-            display_data['grasps'] = grasps_for_display
+            display_data['grasps'] = self._get_grasp_predictions_from_roi(rgb_frame, depth_frame, full_image_bbox)
 
         self.main_image_signal.emit(display_data)
 
@@ -134,10 +133,8 @@ class SystemBackend(QObject):
         if grasp_crop_rgb.size == 0:
             return []
 
-        # 预测 (GraspModel.predict 内部应处理缩放)
-        # 这里假设 GraspModel.predict 返回 (grasps, q_img, ang_img, width_img)
-        # 且返回的 grasps 坐标是相对于它接收的图像 (grasp_crop_rgb)
-        grasps_in_crop, q_img, ang_img, width_img = self.grasper.predict(grasp_crop_rgb, grasp_crop_depth)
+        # 抓取预测
+        grasps_in_crop, q_img, ang_img, width_img = self.grasp_model.predict(grasp_crop_rgb, grasp_crop_depth)
 
         self.quality_map_signal.emit(q_img)
         self.angle_map_signal.emit(ang_img)
@@ -147,13 +144,14 @@ class SystemBackend(QObject):
         final_grasps = []
         for g in grasps_in_crop:
             # 直接将抓取矩形的四个点加上偏移即可
-            points_in_crop = g.as_gr.points
+            points_in_crop = g.get('points')
             points_in_full_img = points_in_crop.copy()
-            points_in_full_img[:, 0] += grasp_region_y1  # Y 偏移
-            points_in_full_img[:, 1] += grasp_region_x1  # X 偏移
+            points_in_full_img[:, 0] += grasp_region_x1  # Y 偏移
+            points_in_full_img[:, 1] += grasp_region_y1  # X 偏移
 
             # 假设 g 对象有 quality 属性
-            quality = q_img[int(g.center[0]), int(g.center[1])] if hasattr(g, 'center') else 0.9  # 示例
+            center = g.get('center')
+            quality = q_img[int(center[0]), int(center[1])]
 
             final_grasps.append({
                 'points': points_in_full_img.tolist(),
@@ -197,7 +195,7 @@ class SystemBackend(QObject):
         self.roi_image_signal.emit(roi)
         self.log_signal.emit(UILogger.info("正在计算最佳抓取姿态..."))
 
-        q_img, ang_img, width_img = self.grasper.predict(roi)
+        q_img, ang_img, width_img = self.grasp_model.predict(roi)
         self.quality_map_signal.emit(q_img)
         self.angle_map_signal.emit(ang_img)
         self.width_map_signal.emit(width_img)
@@ -214,8 +212,10 @@ class SystemBackend(QObject):
         self.grasp_enable_signal.emit(True)
         self.log_signal.emit(UILogger.warning("目标已锁定，请点击 '执行抓取'"))
 
-    def select_target(self, detections, depth_map):
-        return max(detections, key=lambda x: x[1])
+    def select_target(self, detections: list, depth_map):
+        # score 排序
+        detections = sorted(detections, key=lambda x: x.get('score'), reverse=True)
+        return detections[0]
 
     # --- 槽函数 (Slots) ---
     @pyqtSlot(bool)
@@ -290,23 +290,31 @@ class SystemBackend(QObject):
             self.log_signal.emit(UILogger.error("指令解析失败"))
             return
         # 更新当前检测文本，即使在非任务模式下也生效
-        self.current_text_prompt = tasks[0].get('prompt', 'object')
+        self.current_text_prompt = tasks[0].get('prompt', '')
         self.log_signal.emit(UILogger.info(f"当前识别目标已设为: '{self.current_text_prompt}'"))
 
-        if tasks[0].get('quantity') == 'all':
-            rgb, _ = self.camera.get_frame()
-            detections = self.detector.detect(rgb, tasks[0]['prompt'])
-            count = len(detections)
-            if count > 0:
-                self.loop_task_prompt = tasks[0]['prompt']
-                self.loop_task_remaining_count = count
-                self.initial_loop_count = count
-                self.log_signal.emit(UILogger.success(f"扫描到 {count} 个目标，循环任务已启动"))
-            else:
-                self.log_signal.emit(UILogger.warning("未扫描到任何目标"))
-        else:
-            self.task_queue = tasks
-            self.log_signal.emit(UILogger.success(f"已创建 {len(tasks)} 个任务"))
+        # rgb, _ = self.camera.get_frame()
+        # detections = self.detector.detect(rgb, self.current_text_prompt)
+        # count = len(detections)
+        # if count > 0:
+        #     self.log_signal.emit(UILogger.success(f"扫描到 {count} 个目标"))
+        # else:
+        #     self.log_signal.emit(UILogger.warning("未扫描到任何目标"))
+
+        # if tasks[0].get('quantity') == 'all':
+        #     rgb, _ = self.camera.get_frame()
+        #     detections = self.detector.detect(rgb, tasks[0]['prompt'])
+        #     count = len(detections)
+        #     if count > 0:
+        #         self.loop_task_prompt = tasks[0]['prompt']
+        #         self.loop_task_remaining_count = count
+        #         self.initial_loop_count = count
+        #         self.log_signal.emit(UILogger.success(f"扫描到 {count} 个目标，循环任务已启动"))
+        #     else:
+        #         self.log_signal.emit(UILogger.warning("未扫描到任何目标"))
+        # else:
+        #     self.task_queue = tasks
+        #     self.log_signal.emit(UILogger.success(f"已创建 {len(tasks)} 个任务"))
 
     @pyqtSlot()
     def execute_grasp(self):

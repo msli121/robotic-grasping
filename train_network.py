@@ -28,7 +28,7 @@ def parse_args():
 
     # Network
     parser.add_argument('--network', type=str, default='grconvnet3',
-                        help='Network name in inference/models')
+                        help='Network name in inference/pretrained_models')
     parser.add_argument('--input-size', type=int, default=224,
                         help='Input image size for the network')
     parser.add_argument('--use-depth', type=int, default=1,

@@ -8,12 +8,12 @@ torchsummary==1.5.1
 tensorboardX==2.6.2.2
 tensorboard==2.17.0
 PyQt5== 5.15.11
-ultralytics==8.1.0
 Pillow==10.0.1
 tqdm==4.67.1
 scikit-learn==1.6.1
 colorlog==6.9.0
 pyrealsense2
 imagecodecs
+ultralytics
 #torch==2.2.0
 #torchvision==0.17.0

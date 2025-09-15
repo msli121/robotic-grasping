@@ -60,7 +60,7 @@ class RealSenseCamera:
             self.pipeline.stop()
             self.pipeline = None
 
-    def get_image_bundle(self, fill_depth=True, fill_method='opencv'):
+    def get_image_bundle(self, fill_depth=False, fill_method='opencv'):
         """
         获取图像包
 

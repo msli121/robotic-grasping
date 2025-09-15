@@ -8,9 +8,8 @@ import os
 import random
 import shutil
 
-import cv2
 import albumentations as A
-import numpy as np
+import cv2
 
 
 # 重命名对指定文件夹下的images和labels
@@ -424,7 +423,7 @@ if __name__ == '__main__':
 
     # 数据分割
     input_dir = r'D:\datasets\paper_dataset\rgb'
-    output_dir = r'D:\PycharmProjects\robotic-grasping\yolov8\datasets\paper'
+    output_dir = r'D:\PycharmProjects\robotic-grasping\yolo\datasets\paper'
     split_dataset(input_dir, output_dir, train_ratio=0.8, val_ratio=0.2)
 
     # 将 YOLOv8 格式的标签转换为 JSON 格式

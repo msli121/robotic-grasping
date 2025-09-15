@@ -151,7 +151,7 @@ def visualize_camera_detection(model_path: str, font_path: str):
 
 
 if __name__ == '__main__':
-    MODEL_PATH = r"D:\PycharmProjects\robotic-grasping\yolov8\runs\detect\train3\weights\best.pt"
+    MODEL_PATH = r"D:\PycharmProjects\robotic-grasping\yolov8\runs\detect\train_20250914_144614\weights\best.pt"
     # 字体文件路径，或者更换为其他中文字体路径
     FONT_PATH = "C:/Windows/Fonts/simhei.ttf"
     if not os.path.isfile(MODEL_PATH):

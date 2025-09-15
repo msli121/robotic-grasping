@@ -8,14 +8,10 @@ import time
 
 import cv2
 import numpy as np
-import torch
 
+from grasp_predictor import GraspPredictor
 from hardware.camera import RealSenseCamera
-from hardware.device import get_device
-from inference.post_process import post_process_output
-from utils.data.camera_data import CameraData
-from utils.dataset_processing.grasp import detect_grasps
-from yolov8.inference import YOLOv8_Detector
+from yolo.inference import YOLOv8_Detector
 
 logging.basicConfig(
     level=logging.INFO,
@@ -162,11 +158,11 @@ class RobotPlanner:
 class DetectionModel:
     """YOLO-World or YOLOv8 目标检测模型"""
 
-    def __init__(self, model_path=None, model_type='yolov8'):
+    def __init__(self, model_path=None, model_type='yolo'):
         """
         初始化检测模型
         :param model_path: 模型文件路径
-        :param model_type: 模型类型, 'yolov8' 或 'yolo-world'
+        :param model_type: 模型类型, 'yolo' 或 'yolo-world'
         """
         if model_path is None:
             model_path = r"D:\PycharmProjects\robotic-grasping\yolov8\runs\detect\train3\weights\best.pt"
@@ -175,33 +171,35 @@ class DetectionModel:
         logger.info(f"[DetectionModel] [{model_type}] Loading detection model from {model_path}")
         if model_path is None:
             raise Exception("Model path is None")
-        if self.model_type == 'yolov8':
+        if self.model_type == 'yolo':
             self.detector = YOLOv8_Detector(model_path)
             self.detector.load_model()
 
-    def detect(self, image: np.ndarray, text_prompt: str) -> list:
+    def detect(self, image: np.ndarray, text_prompt: str, threshold=0.5) -> list:
         """
         执行目标检测
         :param image: 输入图像, np.array, shape=(H, W, 3)
         :param text_prompt: 检测提示词
+        :param threshold: 置信度阈值
         :return: 检测结果列表
         """
-        logger.info(f"[DetectionModel] Detecting '{text_prompt}'...")
-        return self.detector.detect(image)
+        # logger.info(f"[DetectionModel] Detecting '{text_prompt}'...")
+        target_classes = []
+        if text_prompt:
+            target_classes = [text_prompt]
+        return self.detector.detect(image=image, target_classes=target_classes, threshold=threshold)
 
 
 class GraspModel:
     """GOA-Net 抓取姿态估计模型的占位符"""
 
-    def __init__(self):
-        self.model_path = r'D:\PycharmProjects\robotic-grasping\logs\20250906_1408_training_cornell_grconvnet_goa_Baseline\best_iou_epoch_21_iou_0.9209'
+    def __init__(self, model_path=None):
+        if model_path is None:
+            self.model_path = r'D:\PycharmProjects\robotic-grasping\trained-models\cornell-randsplit-rgbd-grconvnet3-drop1-ch32\epoch_19_iou_0.98'
         if not os.path.exists(self.model_path):
             raise Exception(f"Grasp Model file not found at {self.model_path}")
-        self.cam_data = CameraData(include_depth=True, include_rgb=True)
-        logger.info('Loading grasp model... ')
-        self.model = torch.load(self.model_path)
-        # Get the compute device
-        self.device = get_device(force_cpu=False)
+        self.grasp_predictor = GraspPredictor(self.model_path, output_size=224)
+        self.grasp_predictor.load_model()
 
     def predict(self, rgb, depth):
         """
@@ -210,16 +208,7 @@ class GraspModel:
         :param depth: 输入的深度图像, np.array, shape=(H, W, 1)
         :return: 预测的抓取姿态
         """
-
-        x, depth_img, rgb_img = self.cam_data.get_data(rgb=rgb, depth=depth)
-
-        # Predict the grasp pose using the saved model
-        with torch.no_grad():
-            xc = x.to(self.device)
-            pred = self.model.predict(xc)
-
-        q_img, ang_img, width_img = post_process_output(pred['pos'], pred['cos'], pred['sin'], pred['width'])
-        grasps = detect_grasps(q_img, ang_img, width_img)
+        grasps, q_img, ang_img, width_img = self.grasp_predictor.predict(rgb, depth)
         return grasps, q_img, ang_img, width_img
 
 
@@ -312,19 +301,23 @@ class InstructionParser:
 
     def parse(self, text):
         # TODO: 实现我们之前讨论的、更强大的基于关键词的解析器
-        logger.info(f"[Placeholder] Parsing instruction: '{text}'")
-        if "所有" in text or "全部" in text:
-            prompt = "bolt"  # 简化处理，假设是bolt
-            return [{'prompt': prompt, 'quantity': 'all'}]
-        else:
-            # 简化处理
-            tasks = []
-            sub_commands = text.replace("，", ",").split(",")
-            for cmd in sub_commands:
-                if "红" in cmd:
-                    tasks.append({'prompt': 'red block'})
-                elif "蓝" in cmd:
-                    tasks.append({'prompt': 'blue ball'})
-                else:
-                    tasks.append({'prompt': 'object'})  # 默认
-            return tasks
+        logger.info(f"[中文指令解析] Parsing instruction: '{text}'")
+        tasks = [
+            {'prompt': text.strip()},
+        ]
+        return tasks
+        # if "所有" in text or "全部" in text:
+        #     prompt = "bolt"  # 简化处理，假设是bolt
+        #     return [{'prompt': prompt, 'quantity': 'all'}]
+        # else:
+        #     # 简化处理
+        #     tasks = []
+        #     sub_commands = text.replace("，", ",").split(",")
+        #     for cmd in sub_commands:
+        #         if "红" in cmd:
+        #             tasks.append({'prompt': 'red block'})
+        #         elif "蓝" in cmd:
+        #             tasks.append({'prompt': 'blue ball'})
+        #         else:
+        #             tasks.append({'prompt': 'object'})  # 默认
+        #     return tasks

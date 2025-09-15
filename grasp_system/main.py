@@ -1,4 +1,3 @@
-# main.py (V3.9 - 最终美化版)
 
 import sys
 import cv2
@@ -156,10 +155,22 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(object)
     def _update_quality_map(self, q_img):
+        """
+        优化：使用固定的 [0, 1] 范围来应用色彩图，与matplotlib的 vmin/vmax 一致。
+        这确保了质量分数的颜色在不同帧之间具有可比性。
+        """
+        if q_img is None: return
+
+        # 1. 将q_img的值裁剪到[0, 1]范围，并缩放到[0, 255]
+        # np.clip确保超出范围的值被修正
+        q_img_normalized = np.clip(q_img, 0, 1) * 255
+
+        # 2. 转换为uint8并应用色彩图
         heatmap = cv2.applyColorMap(
-            cv2.normalize(q_img, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8),
+            q_img_normalized.astype(np.uint8),
             cv2.COLORMAP_JET
         )
+
         pixmap = format_image_for_display(heatmap)
         if pixmap:
             self.analysis_panel.q_display.setPixmap(
@@ -167,12 +178,27 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(object)
     def _update_angle_map(self, ang_img):
-        hsv_img = np.zeros((*ang_img.shape, 3), dtype=np.uint8)
+        """
+        优化：代码逻辑已正确实现matplotlib的 hsv 色彩图效果，添加注释说明。
+        ang_img 的范围是 [-pi/2, pi/2]，通过归一化映射到HSV的色调(Hue)通道。
+        """
+        if ang_img is None: return
+
+        # 1. 将角度从 [-pi/2, pi/2] 归一化到 [0, 1]
         normalized_angle = (ang_img + np.pi / 2) / np.pi
+
+        # 2. 创建一个HSV图像
+        #   - 色调(H)通道: 由归一化后的角度决定 (OpenCV中H范围是0-179)
+        #   - 饱和度(S)通道: 设为最大值255，表示颜色最纯
+        #   - 亮度(V)通道: 设为最大值255，表示颜色最亮
+        hsv_img = np.zeros((*ang_img.shape, 3), dtype=np.uint8)
         hsv_img[..., 0] = (normalized_angle * 180).astype(np.uint8)
         hsv_img[..., 1] = 255
         hsv_img[..., 2] = 255
+
+        # 3. 将HSV图像转换为RGB以便显示
         rgb_img = cv2.cvtColor(hsv_img, cv2.COLOR_HSV2RGB)
+
         pixmap = format_image_for_display(rgb_img)
         if pixmap:
             self.analysis_panel.ang_display.setPixmap(
@@ -180,7 +206,25 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(object)
     def _update_width_map(self, width_img):
-        pixmap = format_image_for_display(width_img)
+        """
+        优化：使用固定的 [0, 100] 范围来应用色彩图，与matplotlib的 vmin/vmax 一致。
+        这为抓取宽度提供了一个固定的、可比较的视觉标尺。
+        """
+        if width_img is None: return
+
+        # 1. 将width_img的值裁剪到[0, 100]范围
+        width_img_clipped = np.clip(width_img, 0, 100)
+
+        # 2. 将裁剪后的值从[0, 100]线性映射到[0, 255]
+        width_img_normalized = (width_img_clipped / 100.0) * 255
+
+        # 3. 转换为uint8并应用色彩图
+        heatmap = cv2.applyColorMap(
+            width_img_normalized.astype(np.uint8),
+            cv2.COLORMAP_JET
+        )
+
+        pixmap = format_image_for_display(heatmap)
         if pixmap:
             self.analysis_panel.width_display.setPixmap(
                 pixmap.scaled(self.analysis_panel.width_display.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))

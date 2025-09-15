@@ -50,7 +50,7 @@ class DrawingUtils:
         for det in detections:
             bbox = det.get('bbox')
             # 假设检测结果中没有中文标签，我们简化显示
-            label = det.get('label', 'object')
+            label = det.get('class_name', '')
             score = det.get('score', 0.0)
             if not bbox:
                 continue
@@ -86,8 +86,8 @@ class DrawingUtils:
             if not points_yx or len(points_yx) != 4:
                 continue
 
-            # 关键：将 (y, x) 转换为 QPointF(x, y)
-            q_points = [QPointF(p[1], p[0]) for p in points_yx]
+            # 需要 QPointF(x, y) 顺序
+            q_points = [QPointF(p[0], p[1]) for p in points_yx]
             polygon = QPolygonF(q_points)
 
             painter.setBrush(Qt.NoBrush)

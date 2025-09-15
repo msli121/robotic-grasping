@@ -16,11 +16,13 @@ logging.basicConfig(level=logging.INFO)
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Evaluate network')
-    default_net_path = r'D:\PycharmProjects\robotic-grasping\logs\20250906_1408_training_cornell_grconvnet_goa_Baseline\best_iou_epoch_21_iou_0.9209'
-    # default_net_path = r'D:\PycharmProjects\robotic-grasping\logs\20250907_1739_training_cornell_grconvnet_goa_aff\best_iou_epoch_16_iou_0.9492'
-    # default_net_path = r'D:\PycharmProjects\robotic-grasping\trained-models\cornell-randsplit-rgbd-grconvnet3-drop1-ch32\epoch_19_iou_0.98'
+    default_net_path = r'D:\PycharmProjects\robotic-grasping\trained-models\cornell-randsplit-rgbd-grconvnet3-drop1-ch32\epoch_19_iou_0.98'
+    # default_net_path = r'D:\PycharmProjects\robotic-grasping\trained-pretrained_models\jacquard-rgbd-grconvnet3-drop0-ch32\epoch_48_iou_0.93'
+    # default_net_path = r'D:\PycharmProjects\robotic-grasping\trained-pretrained_models\cornell-randsplit-rgbd-grconvnet3-drop1-ch32\epoch_19_iou_0.98'
     parser.add_argument('--network', type=str, default=default_net_path,
                         help='Path to saved network to evaluate')
+    parser.add_argument('--input-size', type=int, default=224,
+                        help='Input image size for the network')
     parser.add_argument('--use-depth', type=int, default=1,
                         help='Use Depth image for evaluation (1/0)')
     parser.add_argument('--use-rgb', type=int, default=1,
@@ -41,7 +43,7 @@ if __name__ == '__main__':
     logging.info('Connecting to camera...')
     cam = RealSenseCamera()
     cam.connect()
-    cam_data = CameraData(include_depth=args.use_depth, include_rgb=args.use_rgb)
+    cam_data = CameraData(include_depth=args.use_depth, include_rgb=args.use_rgb, output_size=args.input_size)
 
     # Load Network
     logging.info('Loading model...')
@@ -59,6 +61,7 @@ if __name__ == '__main__':
             depth = image_bundle['aligned_depth']
             x, depth_img, rgb_img = cam_data.get_data(rgb=rgb, depth=depth)
             with torch.no_grad():
+                print("x ", x.shape, x.min(), x.max())
                 xc = x.to(device)
                 pred = net.predict(xc)
 

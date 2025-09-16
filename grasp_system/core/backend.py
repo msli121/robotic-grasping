@@ -1,16 +1,21 @@
+import yaml
+import logging
 import numpy as np
+
 from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot, QTimer
 
-from core_components import (CameraHandler, ArmController, GripperController, RobotPlanner,
-                             DetectionModel, GraspModel, CoordinateTransformer,
-                             InstructionParser, PostProcessor)
-from logger import UILogger
+from grasp_system.core.core_components import (CameraHandler, RobotArmController, GripperController, RobotPlanner,
+                                               DetectionModel, GraspModel, CoordinateTransformer,
+                                               InstructionParser, PostProcessor)
+from grasp_system.ui.ui_logger import UILogger
+
+logger = logging.getLogger(__name__)
 
 
 class SystemBackend(QObject):
     """
     系统的后端逻辑，在一个独立的线程中运行。
-    采用QTimer驱动的非阻塞模式，统一处理实时显示和任务驱动的抓取流程。
+    采用QTimer驱动的非阻塞模式，统一处理实时显示和任务驱动的抓取流程
     """
     # --- 信号定义 ---
     log_signal = pyqtSignal(str)
@@ -26,6 +31,14 @@ class SystemBackend(QObject):
     def __init__(self):
         super().__init__()
 
+        # --- 加载配置 ---
+        try:
+            with open("./config/config.yaml", 'r', encoding='utf-8') as f:
+                self.config = yaml.safe_load(f)
+        except Exception as e:
+            self.log_signal.emit(UILogger.error(f"系统错误: 无法加载配置文件!"))
+            raise e
+
         # --- 任务管理 ---
         self._is_paused_for_execution = False  # 是否正在等待用户点击“执行抓取”
         self.task_queue = []  # 存储待执行的查询计划 (QueryPlan)
@@ -33,24 +46,30 @@ class SystemBackend(QObject):
         # --- 状态标志位 (由UI直接控制) ---
         self.is_detection_enabled = False
         self.is_grasp_enabled = False
-        self.current_mode = "closed_set"  # 默认模式: "closed_set" or "open_vocab"
+        self.current_mode = self.config['application']['detection'][
+            'default_mode']  # 默认模式: "closed_set" or "open_vocab"
         self.current_text_prompt = ""  # 指令模式下的实时文本
         self.current_selection_strategy = "置信度最高"  # 默认策略
 
         # --- 初始化所有核心组件 ---
-        self.camera = CameraHandler()
-        self.arm = ArmController()
-        self.gripper = GripperController()
+        # 硬件模块
+        self.camera = CameraHandler(width=self.config['hardware']['camera']['resolution'][0],
+                                    height=self.config['hardware']['camera']['resolution'][1])
+        self.arm = RobotArmController(ip=self.config['hardware']['arm']['ip'],
+                                      port=self.config['hardware']['arm']['port'])
+        self.gripper = GripperController(mac_address=self.config['hardware']['gripper']['mac_address'], )
         self.planner = RobotPlanner(self.arm, self.gripper)
-
         # 算法模块
-        self.grasp_model = GraspModel()
-        self.transformer = CoordinateTransformer()
-        self.parser = InstructionParser()
+        self.grasp_model = GraspModel(model_path=self.config['paths']['grasp_model'],
+                                      input_size=self.config['application']['grasping']['model_input_size'])
+        self.coord_transformer = CoordinateTransformer(camera_matrix_path=self.config['paths']['camera_matrix'],
+                                                       M_base_camera_path=self.config['paths']['M_base_camera'])
+        self.instruction_parser = InstructionParser(vocab_path=self.config['paths']['vocab'])
         self.post_processor = PostProcessor()
-        # 分别管理两个检测模型
-        self.open_vocab_detector = DetectionModel()
-        self.closed_set_detector = DetectionModel()
+        self.open_vocab_detector = DetectionModel(model_path=self.config['paths']['open_vocab_model'],
+                                                  model_type='yoloe-pf')
+        self.closed_set_detector = DetectionModel(model_path=self.config['paths']['closed_set_model'],
+                                                  model_type='yoloe')
         self.detector = self.closed_set_detector  # 默认激活闭集模型
 
         self.final_grasp_pose_world = None  # 存储最终计算出的世界坐标抓取位姿
@@ -59,70 +78,74 @@ class SystemBackend(QObject):
     @pyqtSlot()
     def run(self):
         """初始化工作线程环境，并启动定时器。"""
-        # TODO: 从配置文件加载默认模型路径
+        # 加载模型
         try:
-            # TODO: 从配置文件读取路径
-            closed_set_path = "path/to/your/yolov8_best.pt"
-            open_vocab_path = "path/to/your/yoloe_best.pt"
-            # self.closed_set_detector.set_strategy("yolov8", closed_set_path)
-            # self.open_vocab_detector.set_strategy("yoloworld", open_vocab_path)
-            # self.log_signal.emit(UILogger.success("所有检测模型加载成功。"))
+            self.log_signal.emit(UILogger.info("正在加载模型..."))
+            self.grasp_model.load()
+            self.open_vocab_detector.load()
+            self.closed_set_detector.load()
+            self.coord_transformer.load()
+            self.log_signal.emit(UILogger.info("模型加载完成"))
         except Exception as e:
             self.log_signal.emit(UILogger.error(f"模型加载失败: {e}"))
             return
 
         self.timer = QTimer()
         self.timer.timeout.connect(self.main_tick)
-        self.timer.start(100)  # 10 FPS
+        self.timer.start(self.config['application']['timer_interval_ms'])  # 10 FPS
         self.log_signal.emit(UILogger.info("后端线程已启动"))
 
     def main_tick(self):
         """
-        由QTimer周期性调用的“心跳”函数。
-        这是整个后端逻辑的唯一驱动源。
+        由QTimer周期性调用的“心跳”函数
+        后端逻辑的主循环驱动源
         """
-        # 1. 检查是否有任务需要执行
-        if self.task_queue and not self._is_paused_for_execution:
-            # 如果队列中有任务，并且系统不处于暂停状态，则执行一个任务周期
-            self.process_single_task_cycle()
-            return  # 执行完任务周期后，直接返回，等待下一个tick来刷新UI
+        try:
+            # 1. 检查是否有任务需要执行
+            if self.task_queue and not self._is_paused_for_execution:
+                # 如果队列中有任务，并且系统不处于暂停状态，则执行一个任务周期
+                self.process_single_task_cycle()
+                return  # 执行完任务周期后，直接返回，等待下一个tick来刷新UI
 
-        # 2. 如果没有任务，则执行实时显示逻辑
-        rgb_frame, depth_frame = self.camera.get_frame()
-        if rgb_frame is None:
-            self.main_image_signal.emit({'frame': None, 'detections': [], 'grasps': []})
-            return
+            # 2. 如果没有任务，则执行实时显示逻辑
+            rgb_frame, depth_frame = self.camera.get_frame()
+            if rgb_frame is None:
+                self.main_image_signal.emit({'frame': None, 'detections': [], 'grasps': []})
+                return
 
-        display_data = {'frame': rgb_frame, 'detections': [], 'grasps': []}
+            display_data = {'frame': rgb_frame, 'detections': [], 'grasps': []}
 
-        if self.is_detection_enabled:
-            detections = self.detector.detect(rgb_frame, text_prompt=self.current_text_prompt)
-            display_data['detections'] = detections
+            if self.is_detection_enabled:
+                detections = self.detector.detect(rgb_frame, text_prompt=self.current_text_prompt)
+                display_data['detections'] = detections
 
-            if self.is_grasp_enabled and detections:
-                # 实时显示模式下，后处理约束为空
-                target = self.post_processor.select_best_target(detections, [], rgb_frame, depth_frame)
-                if target:
-                    grasps, roi, q, ang, w = self._get_grasp_predictions_from_roi(rgb_frame, depth_frame,
-                                                                                  target['bbox'])
-                    display_data['grasps'] = grasps
-                    # 实时更新分析面板
-                    self.roi_image_signal.emit(roi)
-                    self.quality_map_signal.emit(q)
-                    self.angle_map_signal.emit(ang)
-                    self.width_map_signal.emit(w)
+                if self.is_grasp_enabled and detections:
+                    # 实时显示模式下，后处理约束为空
+                    target = self.post_processor.select_best_target(detections, [], rgb_frame, depth_frame)
+                    if target:
+                        grasps, roi, q, ang, w = self._get_grasp_predictions_from_roi(rgb_frame, depth_frame,
+                                                                                      target['bbox'])
+                        display_data['grasps'] = grasps
+                        # 实时更新分析面板
+                        self.roi_image_signal.emit(roi)
+                        self.quality_map_signal.emit(q)
+                        self.angle_map_signal.emit(ang)
+                        self.width_map_signal.emit(w)
 
-        elif self.is_grasp_enabled:
-            # 只开启抓取，则对全图进行
-            h, w = rgb_frame.shape[:2]
-            grasps, roi, q, ang, w = self._get_grasp_predictions_from_roi(rgb_frame, depth_frame, (0, 0, w, h))
-            display_data['grasps'] = grasps
-            self.roi_image_signal.emit(roi)
-            self.quality_map_signal.emit(q)
-            self.angle_map_signal.emit(ang)
-            self.width_map_signal.emit(w)
+            elif self.is_grasp_enabled:
+                # 只开启抓取，则对全图进行
+                h, w = rgb_frame.shape[:2]
+                grasps, roi, q, ang, w = self._get_grasp_predictions_from_roi(rgb_frame, depth_frame, (0, 0, w, h))
+                display_data['grasps'] = grasps
+                self.roi_image_signal.emit(roi)
+                self.quality_map_signal.emit(q)
+                self.angle_map_signal.emit(ang)
+                self.width_map_signal.emit(w)
 
-        self.main_image_signal.emit(display_data)
+            self.main_image_signal.emit(display_data)
+        except Exception as e:
+            logger.error(e)
+            self.log_signal.emit(UILogger.error(f"系统错误: {str(e)}"))
 
     def _get_grasp_predictions_from_roi(self, full_rgb, full_depth, detection_bbox):
         """从一个检测框ROI中，提取抓取区域，进行预测，并返回在原图坐标系下的抓取结果和中间图像。"""
@@ -160,8 +183,9 @@ class SystemBackend(QObject):
             points_in_full_img[:, 0] += grasp_region_y1  # Y 偏移
             points_in_full_img[:, 1] += grasp_region_x1  # X 偏移
 
+            # (y,x) in numpy
             center = g.get('center')
-            quality = q_img[int(center[1]), int(center[0])] if q_img is not None else 0  # (y,x) in numpy
+            quality = q_img[int(center[1]), int(center[0])] if q_img is not None else 0
 
             final_grasps.append({
                 'points': points_in_full_img.tolist(),
@@ -224,7 +248,7 @@ class SystemBackend(QObject):
         # TODO: 从 best_grasp 中提取中心点(u,v)和深度值
         # grasp_u, grasp_v = best_grasp['center']
         # depth_val = ...
-        # self.final_grasp_pose_world = self.transformer.transform_pixel_to_base(grasp_u, grasp_v, depth_val)
+        # self.final_grasp_pose_world = self.coord_transformer.transform_pixel_to_base(grasp_u, grasp_v, depth_val)
         self.final_grasp_pose_world = (0, 0, 0, 0, 0, 0)  # 占位符
 
         self.log_signal.emit(UILogger.success("抓取姿态计算完成，3D坐标转换完成。"))
@@ -259,7 +283,7 @@ class SystemBackend(QObject):
         self.current_selection_strategy = strategy
         self.log_signal.emit(UILogger.info(f"目标选择策略已更改为: {strategy}"))
 
-    # --- 响应UI模式切换的槽函数 ---
+    # --- 响应UI的槽函数 ---
     @pyqtSlot(str)
     def set_mode(self, mode_name):  # "open_vocab" or "closed_set"
         self.current_mode = mode_name
@@ -273,7 +297,7 @@ class SystemBackend(QObject):
     @pyqtSlot(str)
     def process_instruction(self, text):
         self.stop_all_tasks()
-        plan = self.parser.parse(text, self.current_mode)
+        plan = self.instruction_parser.parse(text, self.current_mode)
         if plan:
             self.task_queue.append(plan)
             self.log_signal.emit(UILogger.success(f"指令解析成功，已创建任务。"))
@@ -283,7 +307,7 @@ class SystemBackend(QObject):
             self.log_signal.emit(UILogger.error(f"指令解析失败！"))
         # # 指令模式下，此函数负责创建并启动一个任务
         # if "指令" in self.current_mode:
-        #     plan = self.parser.parse(text, self.current_mode)
+        #     plan = self.instruction_parser.parse(text, self.current_mode)
         #     if plan:
         #         self.task_queue.append(plan)
         #         self.log_signal.emit(UILogger.success(f"指令解析成功，已创建任务。"))
@@ -330,11 +354,11 @@ class SystemBackend(QObject):
     def connect_camera(self):
         ok = self.camera.connect()
         self.device_connection_signal.emit("cam", ok)
-        self.log_signal.emit(UILogger.success("相机连接成功。") if ok else UILogger.error("相机连接失败。"))
+        self.log_signal.emit(UILogger.success("相机连接成功") if ok else UILogger.error("相机连接失败"))
         if ok:
-            cal_ok = self.transformer.load_calibration_file()
+            cal_ok = self.coord_transformer.load()
             self.log_signal.emit(
-                UILogger.success("手眼标定矩阵加载成功。") if cal_ok else UILogger.error("手眼标定矩阵加载失败！"))
+                UILogger.success("标定矩阵加载成功") if cal_ok else UILogger.error("标定矩阵加载失败！"))
 
     @pyqtSlot()
     def disconnect_camera(self):
@@ -344,27 +368,27 @@ class SystemBackend(QObject):
 
     @pyqtSlot()
     def connect_arm(self):
-        ok = self.arm.connect("192.168.1.11")
+        ok = self.arm.connect()
         self.device_connection_signal.emit("arm", ok)
-        self.log_signal.emit(UILogger.success("机械臂连接成功。") if ok else UILogger.error("机械臂连接失败。"))
+        self.log_signal.emit(UILogger.success("机械臂连接成功") if ok else UILogger.error("机械臂连接失败"))
 
     @pyqtSlot()
     def disconnect_arm(self):
         self.arm.disconnect()
         self.device_connection_signal.emit("arm", False)
-        self.log_signal.emit(UILogger.info("机械臂已断开。"))
+        self.log_signal.emit(UILogger.info("机械臂已断开"))
 
     @pyqtSlot()
     def connect_gripper(self):
-        ok = self.gripper.connect("EC:XX:XX:XX:XX")
+        ok = self.gripper.connect()
         self.device_connection_signal.emit("gripper", ok)
-        self.log_signal.emit(UILogger.success("夹爪连接成功。") if ok else UILogger.error("夹爪连接失败。"))
+        self.log_signal.emit(UILogger.success("夹爪连接成功") if ok else UILogger.error("夹爪连接失败"))
 
     @pyqtSlot()
     def disconnect_gripper(self):
         self.gripper.disconnect()
         self.device_connection_signal.emit("gripper", False)
-        self.log_signal.emit(UILogger.info("夹爪已断开。"))
+        self.log_signal.emit(UILogger.info("夹爪已断开"))
 
     @pyqtSlot()
     def cleanup(self):

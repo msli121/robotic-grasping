@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 # YOLODetector
 # ============================================================================
-class YOLODetector():
+class YOLODetector(object):
     def __init__(self, model_path):
         self.model_path = model_path
         self.model = None
@@ -35,21 +35,20 @@ class YOLODetector():
             logger.error(f"YOLOv8 model file not found: {self.model_path}")
         return self.model
 
-    def detect(self, image: np.ndarray, target_classes: list = None, threshold: float = 0.5) -> list:
+    def detect(self, image: np.ndarray, class_names: list = None, threshold: float = 0.5) -> list:
         """
       对单张图像进行目标检测，并返回结构化的结果
 
         :param image: 输入图像 (NumPy array, BGR或RGB格式)。
-        :param target_classes: (可选) 一个包含目标类别名称的列表，只返回这些类别的检测结果。
+        :param class_names: (可选) 一个包含目标类别名称的列表，只返回这些类别的检测结果。
                                如果为 None，则返回所有检测到的类别。
         :param threshold: (可选) 置信度阈值，低于此值的检测结果将被忽略。
         :return:  {'bbox': (x1, y1, x2, y2), 'score': float, 'class_id': int, 'class_name': str}
         """
         results = self.model.predict(image, verbose=False)
-        detections = []
         if not results:
-            return detections
-
+            return []
+        detections = []
         for r in results:
             for box in r.boxes.cpu().numpy():
                 score = float(box.conf[0])
@@ -60,7 +59,7 @@ class YOLODetector():
                 cls_name = r.names[cls_id]
 
                 # 按目标类别过滤
-                if target_classes is not None and cls_name not in target_classes:
+                if class_names is not None and cls_name not in class_names:
                     continue
 
                 x1, y1, x2, y2 = map(int, box.xyxy[0])
@@ -78,7 +77,7 @@ class YOLODetector():
 # ============================================================================
 # YOLODetector
 # ============================================================================
-class YOLOEDetector():
+class YOLOEDetector(object):
     def __init__(self, model_path):
         self.model_path = model_path
         self.model = None
@@ -92,21 +91,20 @@ class YOLOEDetector():
             logger.error(f"YOLOE model file not found: {self.model_path}")
         return self.model
 
-    def detect(self, image: np.ndarray, target_classes: list = None, threshold: float = 0.5) -> list:
+    def detect(self, image: np.ndarray, class_names: list = None, threshold: float = 0.5) -> list:
         """
       对单张图像进行目标检测，并返回结构化的结果
 
         :param image: 输入图像 (NumPy array, BGR或RGB格式)。
-        :param target_classes: (可选) 一个包含目标类别名称的列表，只返回这些类别的检测结果。
+        :param class_names: (可选) 一个包含目标类别名称的列表，只返回这些类别的检测结果。
                                如果为 None，则返回所有检测到的类别。
         :param threshold: (可选) 置信度阈值，低于此值的检测结果将被忽略。
         :return:  {'bbox': (x1, y1, x2, y2), 'score': float, 'class_id': int, 'class_name': str}
         """
         results = self.model.predict(image, verbose=False)
-        detections = []
         if not results:
-            return detections
-
+            return []
+        detections = []
         for r in results:
             for box in r.boxes.cpu().numpy():
                 score = float(box.conf[0])
@@ -117,7 +115,7 @@ class YOLOEDetector():
                 cls_name = r.names[cls_id]
 
                 # 按目标类别过滤
-                if target_classes is not None and cls_name not in target_classes:
+                if class_names is not None and cls_name not in class_names:
                     continue
 
                 x1, y1, x2, y2 = map(int, box.xyxy[0])
@@ -132,7 +130,7 @@ class YOLOEDetector():
         return detections
 
 
-class YOLOETextPromptDetector():
+class YOLOETextPromptDetector(object):
     def __init__(self, model_path):
         self.model_path = model_path
         self.model = None
@@ -146,21 +144,21 @@ class YOLOETextPromptDetector():
             logger.error(f"YOLOE model file not found: {self.model_path}")
         return self.model
 
-    def detect(self, image: np.ndarray, target_classes: list = None, threshold: float = 0.5) -> list:
+    def detect(self, image: np.ndarray, class_names: list = None, threshold: float = 0.2) -> list:
         """
         对单张图像进行目标检测，并返回结构化的结果
 
         :param image: 输入图像 (NumPy array, BGR或RGB格式)。
-        :param target_classes: (可选) 一个包含目标类别名称的列表，只返回这些类别的检测结果。
+        :param class_names: (可选) 一个包含目标类别名称的列表，只返回这些类别的检测结果。
                                如果为 None，则返回所有检测到的类别。
         :param threshold: (可选) 置信度阈值，低于此值的检测结果将被忽略。
         :return:  {'bbox': (x1, y1, x2, y2), 'score': float, 'class_id': int, 'class_name': str}
         """
-        self.model.set_classes(target_classes, self.model.get_text_pe(target_classes))
+        self.model.set_classes(class_names, self.model.get_text_pe(class_names))
         results = self.model.predict(image, verbose=False)
-        detections = []
         if not results:
-            return detections
+            return []
+        detections = []
         for r in results:
             for box in r.boxes.cpu().numpy():
                 score = float(box.conf[0])

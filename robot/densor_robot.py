@@ -34,13 +34,18 @@ class DensorRobot:
         except:
             return False
 
-    def connect(self):
-        # 设置超时时间
-        self.tcp_client.settimeout(10)
-        self.tcp_client.connect((self.host, self.port))
-        self.recv_thread = threading.Thread(target=self.receive_message)  # 创建接收消息的线程
-        self.recv_thread.daemon = True  # 设置线程为守护线程
-        self.recv_thread.start()  # 启动接收消息线程
+    def connect(self) -> bool:
+        try:
+            # 设置超时时间
+            self.tcp_client.settimeout(10)
+            self.tcp_client.connect((self.host, self.port))
+            self.recv_thread = threading.Thread(target=self.receive_message)  # 创建接收消息的线程
+            self.recv_thread.daemon = True  # 设置线程为守护线程
+            self.recv_thread.start()  # 启动接收消息线程
+        except Exception as e:
+            print(f"[robot] Connect failed: {e}")
+            return False
+        return True
 
     def close(self):
         self.receive_flag = False  # 设置接收消息的标识为False，结束接收线程

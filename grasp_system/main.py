@@ -1,14 +1,16 @@
 import sys
+import logging
 import cv2
 import numpy as np
-from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QHBoxLayout, QLabel
 from PyQt5.QtCore import QThread, pyqtSignal, pyqtSlot, Qt, QRect
 from PyQt5.QtGui import QImage, QPixmap, QPainter, QColor
+from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QHBoxLayout
 
-from backend import SystemBackend
-from stylesheet import STYLE_SHEET
-from ui_components import ControlPanel, VisionLogPanel, AnalysisPanel
-from drawing_utils import DrawingUtils
+from grasp_system.core.backend import SystemBackend
+from grasp_system.utils.drawing_utils import DrawingUtils
+from grasp_system.ui.stylesheet import STYLE_SHEET
+from grasp_system.ui.ui_components import ControlPanel, VisionLogPanel, AnalysisPanel
+from grasp_system.utils.logger_setup import setup_logging
 
 
 def format_image_for_display(img):
@@ -267,6 +269,8 @@ def main():
     """
     应用程序的入口函数。
     """
+    setup_logging()
+
     app = QApplication(sys.argv)
     app.setStyleSheet(STYLE_SHEET)
 

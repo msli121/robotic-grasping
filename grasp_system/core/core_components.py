@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # @Time       : 2025/9/6 18:00
-# @File       : core_components.py.py
-# @Description: 包含了所有硬件和模型模块的核心组件的引用
+# @File       : core_components.py
+# @Description: 包含了所有硬件和模型模块的核心组件
 import logging
 import os
 import time
@@ -12,12 +12,10 @@ import yaml
 
 from grasp_predictor import GraspPredictor
 from hardware.camera import RealSenseCamera
-from yolo.inference import YOLODetector
+from robot.densor_robot import DensorRobot
+from robot.gripper_controller import GripperControllerWrapper
+from yolo.inference import YOLODetector, YOLOEDetector, YOLOETextPromptDetector
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-)
 logger = logging.getLogger(__name__)
 
 
@@ -28,17 +26,32 @@ logger = logging.getLogger(__name__)
 class CameraHandler:
     """摄像头处理模块的占位符"""
 
-    def __init__(self):
+    def __init__(self, width=640, height=480):
+        self.width = width
+        self.height = height
         self.camera = None
 
-    def connect(self):
-        time.sleep(0.5)
-        self.camera = RealSenseCamera()
-        self.camera.connect()
-        logger.info("Camera connected...")
-        return True
+    def connect(self) -> bool:
+        try:
+            self.camera = RealSenseCamera(width=self.width, height=self.height)
+            self.camera.connect()
+            logger.info("Camera connected...")
+            return True
+        except Exception as e:
+            logger.error(f"[Camera] Failed to connect camera: {e}")
+            return False
 
-    def get_frame(self):
+    def disconnect(self):
+        if self.camera:
+            self.camera.disconnect()
+            logger.info("[Camera] Camera disconnected.")
+
+    def get_frame(self) -> tuple[np.ndarray, np.ndarray]:
+        """
+            获取当前的图像帧
+            :return: RGB图像 rgb: np.ndarray [H, W, 3],
+                    深度图像 depth: np.ndarray [H, W, 1]
+        """
         if self.camera is None:
             return self.get_default_frame()
         try:
@@ -58,64 +71,79 @@ class CameraHandler:
         noise = np.random.randint(0, 10, (480, 640, 3), dtype=np.uint8)
         return frame + noise, np.random.rand(480, 640)
 
+
+class GripperController:
+    """蓝牙夹爪控制器"""
+
+    def __init__(self, mac_address="EC:23:06:00:D9:FB"):
+        self.mac_address = mac_address
+        self.gripper = GripperControllerWrapper(self.mac_address)
+
+    def connect(self) -> bool:
+        return self.gripper.connect()
+
     def disconnect(self):
-        logger.info("[Placeholder] Camera disconnected.")
+        logger.info("[Gripper] Gripper disconnected.")
+        self.gripper.disconnect()
+
+    def open(self):
+        logger.info("[Gripper] Gripper opening...")
+        self.gripper.open()
+        time.sleep(1.5)
+        logger.info("[Gripper] Gripper opened.")
+
+    def close(self):
+        logger.info("[Gripper] Gripper closing...")
+        self.gripper.close()
+        time.sleep(1.5)
+        logger.info("[Gripper] Gripper closed.")
 
 
-class ArmController:
-    """Densor机械臂控制器的占位符"""
+class RobotArmController:
+    """Densor机械臂控制器"""
 
-    def connect(self, ip):
-        # TODO: 替换为真实的 DensorRobot 连接代码
-        time.sleep(0.5)
-        logger.info(f"[Placeholder] Arm connected to {ip}.")
-        return True
+    def __init__(self, ip="192.168.1.11", port=5002, home_pose=None):
+        if home_pose is None:
+            home_pose = [140, 0, 230.0, -167, 2, 81, 5]
+        self.ip = ip
+        self.port = port
+        self.home_pose = home_pose
+        self.robot = DensorRobot(host=ip, port=port)
 
-    def go_home(self):
-        logger.info("[Placeholder] Arm going to home position.")
-        time.sleep(2)
-        return True
+    def connect(self) -> bool:
+        return self.robot.connect()
 
-    def move_to(self, pose):
-        # TODO: 替换为真实的 robot.send_position(pose)
-        logger.info(f"[Placeholder] Arm moving to pose: {pose}")
+    def disconnect(self):
+        self.robot.close()
+
+    def go_home(self, pose=None) -> bool:
+        if pose is None:
+            pose = self.home_pose
+        if pose is None:
+            logger.error("[RobotArm] Home pose not set.")
+            return False
+        logger.info(f"[RobotArm] Arm going to home position: {pose}")
+        self.robot.send_position(pose)
         time.sleep(1.5)
         return True
 
-    def disconnect(self):
-        logger.info("[Placeholder] Arm disconnected.")
-
-
-class GripperController:
-    """蓝牙夹爪控制器的占位符"""
-
-    def connect(self, mac_address):
-        # TODO: 替换为真实的 GripperControllerWrapper 连接代码
-        time.sleep(0.5)
-        logger.info(f"[Placeholder] Gripper connected to {mac_address}.")
+    def move_to(self, pose) -> bool:
+        if not pose:
+            logger.error("[RobotArm] Move pose not set.")
+            return False
+        logger.info(f"[RobotArm] Move to {pose}")
+        self.robot.send_position(pose)
+        time.sleep(1.5)
         return True
-
-    def open(self):
-        logger.info("[Placeholder] Gripper opening.")
-        time.sleep(0.5)
-        return True
-
-    def close(self):
-        logger.info("[Placeholder] Gripper closing.")
-        time.sleep(0.5)
-        return True
-
-    def disconnect(self):
-        logger.info("[Placeholder] Gripper disconnected.")
 
 
 class RobotPlanner:
     """
-    新增: 机器人规划器, 封装了完整的抓取动作序列。
-    它协调 ArmController 和 GripperController。
+    机器人规划器, 封装了完整的抓取动作序列。
+    它协调 RobotArmController 和 GripperController。
     """
 
-    def __init__(self, arm: ArmController, gripper: GripperController):
+    def __init__(self, arm: RobotArmController, gripper: GripperController):
         self.arm = arm
         self.gripper = gripper
 
@@ -159,22 +187,35 @@ class RobotPlanner:
 class DetectionModel:
     """YOLO-World or YOLOv8 目标检测模型"""
 
-    def __init__(self, model_path=None, model_type='yolo'):
+    def __init__(self, model_path=None, model_type='yoloe'):
         """
         初始化检测模型
         :param model_path: 模型文件路径
-        :param model_type: 模型类型, 'yolo' 或 'yolo-world'
+        :param model_type: 模型类型, 'yolo' 或 'yoloe' 或 'yoloe-pf'
         """
-        if model_path is None:
-            model_path = r"D:\PycharmProjects\robotic-grasping\yolo\runs\detect\train_yoloe_20250915_5\weights\best.pt"
         self.model_type = model_type
         self.model_path = model_path
         self.detector = None
-        logger.info(f"[DetectionModel] [{model_type}] Loading detection model from {model_path}")
-        if model_path and os.path.exists(model_path):
-            if self.model_type == 'yolo':
-                self.detector = YOLODetector(model_path)
-                self.detector.load_model()
+
+    def load(self):
+        if self.model_type == 'yolo':
+            if not self.model_path:
+                self.model_path = r"D:\PycharmProjects\robotic-grasping\yolo\runs\detect\train_yoloe_20250915_5\weights\best.pt"
+            logger.info(f"[DetectionModel] [{self.model_type}] Loading detection model from {self.model_path}")
+            self.detector = YOLODetector(self.model_path)
+            self.detector.load_model()
+        elif self.model_type == 'yoloe':
+            if not self.model_path:
+                self.model_path = r"D:\PycharmProjects\robotic-grasping\yolo\pretrained_models\yoloe-11s-seg.pt"
+            logger.info(f"[DetectionModel] [{self.model_type}] Loading detection model from {self.model_path}")
+            self.detector = YOLOEDetector(self.model_path)
+            self.detector.load_model()
+        elif self.model_type == 'yoloe-pf':
+            if not self.model_path:
+                self.model_path = r"D:\PycharmProjects\robotic-grasping\yolo\pretrained_models\yoloe-11s-seg-pf.pt"
+            logger.info(f"[DetectionModel] [{self.model_type}] Loading detection model from {self.model_path}")
+            self.detector = YOLOETextPromptDetector(self.model_path)
+            self.detector.load_model()
 
     def detect(self, image: np.ndarray, text_prompt: str, threshold=0.5) -> list:
         """
@@ -194,10 +235,13 @@ class DetectionModel:
 class GraspModel:
     """GOA-Net 抓取姿态估计模型的占位符"""
 
-    def __init__(self, model_path=None):
-        if model_path is None:
-            self.model_path = r'D:\PycharmProjects\robotic-grasping\trained-models\cornell-randsplit-rgbd-grconvnet3-drop1-ch32\epoch_19_iou_0.98'
-        self.grasp_predictor = GraspPredictor(self.model_path, output_size=224)
+    def __init__(self, model_path=None, input_size=224):
+        self.model_path = model_path
+        self.input_size = input_size
+        self.grasp_predictor = None
+
+    def load(self):
+        self.grasp_predictor = GraspPredictor(self.model_path, output_size=self.input_size)
         self.grasp_predictor.load_model()
 
     def predict(self, rgb, depth):
@@ -214,28 +258,31 @@ class GraspModel:
 class CoordinateTransformer:
     """坐标转换模块"""
 
-    def __init__(self):
+    def __init__(self, camera_matrix_path=None, M_base_camera_path=None):
+        self.camera_matrix_path = camera_matrix_path
+        self.M_base_camera_path = M_base_camera_path
         # 相机内参 3*3
         self.camera_matrix = None
         # 相机到机器人的变换矩阵 4*4
         self.M_base_camera = None
 
-    def load_calibration_file(self) -> bool:
-        camera_matrix_file = r'D:\PycharmProjects\robotic-grasping\calibrate\calibrate_result\camera_matrix.txt'
-        if not os.path.exists(camera_matrix_file):
-            # raise Exception(f"Camera Matrix file not found at {camera_matrix_file}")
-            logger.info(f"Camera Matrix file not found at {camera_matrix_file}")
+    def load(self) -> bool:
+        if not self.camera_matrix_path:
+            self.camera_matrix_path = r'D:\PycharmProjects\robotic-grasping\calibrate\calibrate_result\camera_matrix.txt'
+        if not os.path.exists(self.camera_matrix_path):
+            logger.error(f"Camera Matrix file not found at {self.camera_matrix_path}")
             return False
-        self.camera_matrix = np.loadtxt(camera_matrix_file, delimiter=' ')
-        logger.info("Camera matrix loaded.")
-
-        M_base_camera_file = r'D:\PycharmProjects\robotic-grasping\calibrate\calibrate_result\M_base_camera.txt'
-        if not os.path.exists(M_base_camera_file):
-            # raise Exception(f"M_base_camera file not found at {M_base_camera_file}")
-            logger.info(f"M_base_camera file not found at {M_base_camera_file}")
+        else:
+            self.camera_matrix = np.loadtxt(self.camera_matrix_path, delimiter=' ')
+            logger.info(f"Camera matrix loaded: {self.camera_matrix}")
+        if not self.M_base_camera_path:
+            self.M_base_camera_path = r'D:\PycharmProjects\robotic-grasping\calibrate\calibrate_result\M_base_camera.txt'
+        if not os.path.exists(self.M_base_camera_path):
+            logger.error(f"M_base_camera file not found at {self.M_base_camera_path}")
             return False
-        self.M_base_camera = np.loadtxt(M_base_camera_file, delimiter=' ')
-        logger.info("M_base_camera loaded.")
+        else:
+            self.M_base_camera = np.loadtxt(self.M_base_camera_path, delimiter=' ')
+            logger.info(f"M_base_camera loaded: {self.M_base_camera}")
         return True
 
     def transform_pixel_to_camera(self, u, v, depth_value) -> np.ndarray:
@@ -302,7 +349,7 @@ class InstructionParser:
     - 在开放词汇模式下，更具灵活性。
     """
 
-    def __init__(self, vocab_path="./vocab.yaml"):
+    def __init__(self, vocab_path="./config/vocab.yaml"):
         try:
             with open(vocab_path, 'r', encoding='utf-8') as f:
                 self.vocab = yaml.safe_load(f)

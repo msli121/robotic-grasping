@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # @Time       : 2025/9/6 17:59
-# @File       : logger.py.py
-# @Description: 彩色日志生成器
+# @File       : ui_logger.py.py
+# @Description: UI彩色日志生成器
 import time
 
 

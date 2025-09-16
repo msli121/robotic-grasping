@@ -1,12 +1,11 @@
 # -*- coding: utf-8 -*-
 # @Time       : 2025/9/9 23:06
 # @File       : drawing_utils.py
-# @Description:
+# @Description: 包含了所有可视化标注的绘制工具
 # grasp_system/drawing_utils.py
 
-import numpy as np
-from PyQt5.QtGui import QPainter, QColor, QPen, QFont, QPolygonF
 from PyQt5.QtCore import QPointF, Qt, QRectF
+from PyQt5.QtGui import QPainter, QColor, QPen, QFont, QPolygonF
 
 
 class DrawingUtils:

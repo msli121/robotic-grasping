@@ -166,13 +166,14 @@ class GripperControllerWrapper:
         self._controller = BluetoothGripperController(mac_address)
         self._loop = asyncio.new_event_loop()
 
-    def connect(self) -> None:
+    def connect(self) -> bool:
         """同步连接设备，失败时抛出异常"""
         try:
             self._loop.run_until_complete(self._controller.connect())
+            return True
         except Exception as e:
             logger.error(f"连接失败: {e}")
-            raise ConnectionError("设备连接失败") from e
+            return False
 
     def open(self) -> bool:
         return self._run_async(self._controller.open_gripper())

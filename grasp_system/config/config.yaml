@@ -1,0 +1,54 @@
+# ============================================================================
+# Grasping System Configuration
+# ============================================================================
+
+# --- 1. 文件与路径配置 ---
+paths:
+  # 闭集专家模型 (例如, 针对特定零件训练的YOLOE)
+  closed_set_model: "D:/PycharmProjects/robotic-grasping/yolo/runs/detect/train_yoloe_20250915_5/weights/best.pt"
+
+  # 开放词汇模型 (例如, YOLOE-PF)
+  open_vocab_model: "D:/PycharmProjects/robotic-grasping/yolo/pretrained_models/yoloe-11s-seg-pf.pt"
+
+  # 抓取姿态估计模型 (例如, 改进GR-ConvNet的GOA-NET)
+  grasp_model: "D:/PycharmProjects/robotic-grasping/trained-models/cornell-randsplit-rgbd-grconvnet3-drop1-ch32/epoch_19_iou_0.98"
+
+  # 指令解析器的词典文件
+  vocab: "./config/vocab.yaml"
+
+  # 手眼标定结果文件
+  camera_matrix: "D:/PycharmProjects/robotic-grasping/calibrate/calibrate_result/camera_matrix.txt"
+  M_base_camera: "D:/PycharmProjects/robotic-grasping/calibrate/calibrate_result/M_base_camera.txt"
+
+# --- 2. 硬件参数 ---
+hardware:
+  camera:
+    # RealSense相机分辨率, e.g., 640x480 or 1280x720
+    resolution: [ 640, 480 ]
+  arm:
+    # Densor机械臂的IP地址
+    ip: "192.168.1.11"
+    # Densor机械臂的端口号
+    port: 5002
+    # home pose
+    home_pose: [ 140, 0, 230.0, -167, 2, 81, 5 ]
+  gripper:
+    # 蓝牙夹爪的MAC地址
+    mac_address: "EC:23:06:00:D9:FB"
+
+# --- 3. 应用程序与算法参数 ---
+application:
+  # 后端主循环的刷新率 (毫秒)
+  timer_interval_ms: 100
+
+  detection:
+    # 默认启动的识别模式: "closed_set" 或 "open_vocab"
+    default_mode: "closed_set"
+    # 实时显示时的默认置信度阈值
+    default_threshold: 0.5
+
+  grasping:
+    # 抓取预测模型的输入图像尺寸
+    model_input_size: 224
+    # 从ROI扩展的正方形区域的最小边长
+    grasp_region_min_size: 224

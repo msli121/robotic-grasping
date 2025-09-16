@@ -12,6 +12,7 @@ Pillow==10.0.1
 tqdm==4.67.1
 scikit-learn==1.6.1
 colorlog==6.9.0
+bleak==0.21.1
 pyrealsense2
 imagecodecs
 ultralytics

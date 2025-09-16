@@ -60,13 +60,14 @@ class RealSenseCamera:
             self.pipeline.stop()
             self.pipeline = None
 
-    def get_image_bundle(self, fill_depth=False, fill_method='opencv'):
+    def get_image_bundle(self, fill_depth=True, fill_method='opencv'):
         """
-        获取图像包
-
+        获取图像帧
         :param fill_depth: 是否填充深度图缺失值
         :param fill_method: 填充方法，可选 opencv bilateral weighted median
-        :return: 包含RGB和对齐深度图的字典
+        :return:
+                RGB图像 rgb: np.ndarray [H, W, 3],
+                对齐后的深度图像 depth: np.ndarray [H, W, 1]
         """
         frames = self.pipeline.wait_for_frames()
 

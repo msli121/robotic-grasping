@@ -787,7 +787,7 @@ def verify_calibration_by_realsense_camera(data_save_dir=None, move_robot=False)
                 robot_pose = list(robot_pose)
                 robot_pose.extend(default_grasp_pose[3:])
                 # y轴偏差
-                robot_pose[1] = robot_pose[1] - 20
+                robot_pose[1] = robot_pose[1] - 0
                 # 停留在上方
                 robot_pose[2] = robot_pose[2] + 50
                 robot.send_position(robot_pose)

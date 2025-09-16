@@ -3,9 +3,10 @@
 # @File       : drawing_utils.py
 # @Description: 包含了所有可视化标注的绘制工具
 # grasp_system/drawing_utils.py
-
+import cv2
+import numpy as np
 from PyQt5.QtCore import QPointF, Qt, QRectF
-from PyQt5.QtGui import QPainter, QColor, QPen, QFont, QPolygonF
+from PyQt5.QtGui import QPainter, QColor, QPen, QFont, QPolygonF, QImage, QPixmap
 
 
 class DrawingUtils:
@@ -103,3 +104,31 @@ class DrawingUtils:
             text_rect = painter.fontMetrics().boundingRect(quality_text)
             text_rect.moveCenter(QPointF(center_x, center_y).toPoint())
             painter.drawText(text_rect, Qt.AlignCenter, quality_text)
+
+
+def format_image_for_display(img: np.ndarray | None) -> QPixmap | None:
+    """
+    将Numpy图像数组安全地转换为QPixmap。
+    - 处理None输入。
+    - 处理灰度图和彩色图。
+    - 对非uint8类型进行健壮的归一化。
+    - **修复: 移除.rgbSwapped()以正确显示颜色。**
+    """
+    if img is None or img.size == 0:
+        return None
+
+    img_copy = img.copy()
+
+    if len(img_copy.shape) == 2:
+        img_copy = cv2.cvtColor(img_copy, cv2.COLOR_GRAY2RGB)
+
+    if img_copy.dtype != np.uint8:
+        if np.max(img_copy) <= 1.0 and np.min(img_copy) >= 0.0:
+            img_copy = (img_copy * 255).astype(np.uint8)
+        else:
+            img_copy = cv2.normalize(img_copy, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+
+    h, w, ch = img_copy.shape
+    bytes_per_line = ch * w
+    q_img = QImage(img_copy.data, w, h, bytes_per_line, QImage.Format_RGB888)
+    return QPixmap.fromImage(q_img)

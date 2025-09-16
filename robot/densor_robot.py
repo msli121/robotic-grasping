@@ -49,8 +49,10 @@ class DensorRobot:
 
     def close(self):
         self.receive_flag = False  # 设置接收消息的标识为False，结束接收线程
-        self.recv_thread.join(timeout=5)  # 等待接收线程结束
-        self.tcp_client.close()
+        if self.recv_thread:
+            self.recv_thread.join(timeout=5)  # 等待接收线程结束
+        if self.tcp_client:
+            self.tcp_client.close()
 
     def __send_cmd(self, cmd):
         if not isinstance(cmd, str):

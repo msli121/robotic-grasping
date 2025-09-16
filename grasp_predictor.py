@@ -79,7 +79,7 @@ class GraspPredictor(object):
                         'angle': g.angle,
                         'width': g.width,
                         'length': g.length,
-                        'center': g.center,
+                        'center': list(g.center),
                         'points': points_cropped_xy,
                     }
                     grasp_infos.append(grasp_info)

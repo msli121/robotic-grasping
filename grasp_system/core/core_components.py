@@ -102,12 +102,22 @@ class GripperController:
 class RobotArmController:
     """Densor机械臂控制器"""
 
-    def __init__(self, ip="192.168.1.11", port=5002, home_pose=None):
+    def __init__(self, ip="192.168.1.11", port=5002, home_pose: list = None, place_target_pose: list = None):
+        """
+        初始化机械臂控制器
+        :param ip: 机械臂IP地址
+        :param port: 机械臂端口号
+        :param home_pose: 机械臂默认位姿 home pose
+        :param place_target_pose: 机械臂放置物体的位姿 place pose
+        """
         if home_pose is None:
             home_pose = [140, 0, 230.0, -167, 2, 81, 5]
+        if place_target_pose is None:
+            place_target_pose = [140, 0, 230.0, -167, 2, 81, 5]
         self.ip = ip
         self.port = port
         self.home_pose = home_pose
+        self.place_target_pose = place_target_pose
         self.robot = DensorRobot(host=ip, port=port)
 
     def connect(self) -> bool:
@@ -139,7 +149,7 @@ class RobotArmController:
 
 class RobotPlanner:
     """
-    机器人规划器, 封装了完整的抓取动作序列。
+    机器人规划器, 封装了完整的抓取动作序列
     它协调 RobotArmController 和 GripperController。
     """
 
@@ -147,35 +157,47 @@ class RobotPlanner:
         self.arm = arm
         self.gripper = gripper
 
-    def execute_grasp_sequence(self, grasp_pose_world, log_callback):
+    def execute_grasp_sequence(self, robot_xyz: list, log_callback):
         """
         执行完整的抓取动作序列, 并通过回调函数记录每一步日志。
-        :param grasp_pose_world: (x,y,z,rx,ry,rz) 目标抓取位姿
+        :param robot_xyz: list (x,y,z) 目标抓取的xyz坐标，单位m
         :param log_callback: 用于发射日志信号的函数
         """
-        # TODO: 从 grasp_pose_world 计算 pre-grasp 和 post-grasp 位置
-        pre_grasp_pose = list(grasp_pose_world);
-        pre_grasp_pose[2] += 50  # 向上50mm
+        robot_xyz = list(robot_xyz)
+        # m -> mm
+        for i in range(3):
+            robot_xyz[i] *= 1000
+        robot_pose = robot_xyz + self.arm.home_pose[3:]
 
+        robot_pose[2] += 50  # 向上50mm
         # 1. 移动到抓取前位置
-        log_callback("[信息] 1/5: 移动到抓取点上方...")
-        if not self.arm.move_to(pre_grasp_pose): return False
+        log_callback("[信息] 1/7: 移动到抓取点上方...")
+        if not self.arm.move_to(robot_pose): return False
 
         # 2. 张开夹爪
-        log_callback("[信息] 2/5: 张开夹爪...")
+        log_callback("[信息] 2/7: 张开夹爪...")
         if not self.gripper.open(): return False
 
         # 3. 下降到抓取位置
-        log_callback("[信息] 3/5: 下降至目标...")
-        if not self.arm.move_to(grasp_pose_world): return False
+        robot_pose[2] -= 50  # 下降50mm
+        log_callback("[信息] 3/7: 下降至目标...")
+        if not self.arm.move_to(robot_pose): return False
 
         # 4. 闭合夹爪
-        log_callback("[信息] 4/5: 闭合夹爪...")
+        log_callback("[信息] 4/7: 闭合夹爪...")
         if not self.gripper.close(): return False
 
         # 5. 抬升
-        log_callback("[信息] 5/5: 抬升物体...")
-        if not self.arm.move_to(pre_grasp_pose): return False
+        log_callback("[信息] 5/7: 抬升物体...")
+        if not self.arm.move_to(self.arm.place_target_pose): return False
+
+        # 6. 张开夹爪
+        log_callback("[信息] 6/7: 张开夹爪...")
+        if not self.gripper.open(): return False
+
+        # 7. 回到home pose
+        log_callback("[信息] 7/7: 回到home pose...")
+        if not self.arm.go_home(): return False
 
         return True
 
@@ -217,7 +239,7 @@ class DetectionModel:
             self.detector = YOLOETextPromptDetector(self.model_path)
             self.detector.load_model()
 
-    def detect(self, image: np.ndarray, text_prompt: str, threshold=0.5) -> list:
+    def detect(self, image: np.ndarray, text_prompt: str | list[str] | None = None, threshold=0.5) -> list:
         """
         执行目标检测
         :param image: 输入图像, np.array, shape=(H, W, 3)
@@ -226,9 +248,11 @@ class DetectionModel:
         :return: 检测结果列表
         """
         # logger.info(f"[DetectionModel] Detecting '{text_prompt}'...")
-        target_classes = []
-        if text_prompt:
+        target_classes = None
+        if isinstance(text_prompt, str):
             target_classes = [text_prompt]
+        elif isinstance(text_prompt, list):
+            target_classes = text_prompt
         return self.detector.detect(image=image, target_classes=target_classes, threshold=threshold)
 
 
@@ -341,6 +365,21 @@ class CoordinateTransformer:
         robot_base_xyz = robot_coord[:3].flatten()  # 移除齐次坐标
         return robot_base_xyz
 
+    @staticmethod
+    def optimize_base_pose(base_xyz: np.ndarray) -> np.ndarray:
+        """
+        优化基座标，修复误差
+        :param base_xyz: 原始基座标 [x, y, z] 单位：m
+        :return: 优化后的基座标 [x, y, z] 单位：m
+        """
+        # 机械臂活动返回中心点
+        center_point = np.array([0.22, 0, 0])  # 根据实际情况修改
+        # xyz轴的缩放误差
+        xyz_scale = np.array([1.11496, 0.8479, 0.9253])  # 根据实际情况修改
+        # 应用缩放误差
+        optimized_xyz = center_point + (base_xyz - center_point) * xyz_scale
+        return optimized_xyz
+
 
 class InstructionParser:
     """
@@ -429,7 +468,8 @@ class PostProcessor:
     - 根据查询计划中的约束，从多个检测结果中筛选出唯一的目标。
     """
 
-    def select_best_target(self, detections: list, constraints: list, rgb_image: np, depth_image: np = None):
+    def select_best_target(self, detections: list, constraints: list, rgb_image: np.ndarray,
+                           depth_image: np = None) -> dict | None:
         """
         应用约束，筛选最佳目标
         :param detections: 检测结果列表，每个元素是一个字典，包含 'bbox', 'score', 'class_id' 等。

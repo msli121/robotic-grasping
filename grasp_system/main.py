@@ -1,45 +1,16 @@
 import sys
-import logging
+
 import cv2
 import numpy as np
 from PyQt5.QtCore import QThread, pyqtSignal, pyqtSlot, Qt, QRect
-from PyQt5.QtGui import QImage, QPixmap, QPainter, QColor
+from PyQt5.QtGui import QPixmap, QPainter, QColor
 from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QHBoxLayout
 
 from grasp_system.core.backend import SystemBackend
-from grasp_system.utils.drawing_utils import DrawingUtils
 from grasp_system.ui.stylesheet import STYLE_SHEET
 from grasp_system.ui.ui_components import ControlPanel, VisionLogPanel, AnalysisPanel
+from grasp_system.utils.drawing_utils import DrawingUtils, format_image_for_display
 from grasp_system.utils.logger_setup import setup_logging
-
-
-def format_image_for_display(img):
-    """
-    将Numpy图像数组安全地转换为QPixmap。
-    - 处理None输入。
-    - 处理灰度图和彩色图。
-    - 对非uint8类型进行健壮的归一化。
-    - **修复: 移除.rgbSwapped()以正确显示颜色。**
-    """
-    if img is None or img.size == 0:
-        # 返回None，让调用者决定如何处理空图像
-        return None
-
-    img_copy = img.copy()
-
-    if len(img_copy.shape) == 2:
-        img_copy = cv2.cvtColor(img_copy, cv2.COLOR_GRAY2RGB)
-
-    if img_copy.dtype != np.uint8:
-        if np.max(img_copy) <= 1.0 and np.min(img_copy) >= 0.0:
-            img_copy = (img_copy * 255).astype(np.uint8)
-        else:
-            img_copy = cv2.normalize(img_copy, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-
-    h, w, ch = img_copy.shape
-    bytes_per_line = ch * w
-    q_img = QImage(img_copy.data, w, h, bytes_per_line, QImage.Format_RGB888)
-    return QPixmap.fromImage(q_img)
 
 
 class MainWindow(QMainWindow):
@@ -242,7 +213,7 @@ class MainWindow(QMainWindow):
 
 
 class AppController:
-    """负责创建和管理UI、后端和线程的生命周期。"""
+    """负责创建和管理UI、后端和线程的生命周期"""
 
     def __init__(self, app):
         self.app = app

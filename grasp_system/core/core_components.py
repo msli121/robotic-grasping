@@ -45,6 +45,7 @@ class CameraHandler:
         if self.camera:
             self.camera.disconnect()
             logger.info("[Camera] Camera disconnected.")
+            self.camera = None
 
     def get_frame(self) -> tuple[np.ndarray, np.ndarray]:
         """
@@ -78,13 +79,16 @@ class GripperController:
     def __init__(self, mac_address="EC:23:06:00:D9:FB"):
         self.mac_address = mac_address
         self.gripper = GripperControllerWrapper(self.mac_address)
+        self.connected = False
 
     def connect(self) -> bool:
-        return self.gripper.connect()
+        self.connected = self.gripper.connect()
+        return self.connected
 
     def disconnect(self):
         logger.info("[Gripper] Gripper disconnected.")
         self.gripper.disconnect()
+        self.connected = False
 
     def open(self):
         logger.info("[Gripper] Gripper opening...")
@@ -119,12 +123,15 @@ class RobotArmController:
         self.home_pose = home_pose
         self.place_target_pose = place_target_pose
         self.robot = DensorRobot(host=ip, port=port)
+        self.connected = False
 
     def connect(self) -> bool:
-        return self.robot.connect()
+        self.connected = self.robot.connect()
+        return self.connected
 
     def disconnect(self):
         self.robot.close()
+        self.connected = False
 
     def go_home(self, pose=None) -> bool:
         if pose is None:
@@ -239,21 +246,21 @@ class DetectionModel:
             self.detector = YOLOETextPromptDetector(self.model_path)
             self.detector.load_model()
 
-    def detect(self, image: np.ndarray, text_prompt: str | list[str] | None = None, threshold=0.5) -> list:
+    def detect(self, rgb_image: np.ndarray, text_prompt: str | list[str] | None = None, threshold=0.5) -> list:
         """
         执行目标检测
-        :param image: 输入图像, np.array, shape=(H, W, 3)
+        :param rgb_image: 输入图像, np.array, shape=(H, W, 3)
         :param text_prompt: 检测提示词
         :param threshold: 置信度阈值
         :return: 检测结果列表
         """
         # logger.info(f"[DetectionModel] Detecting '{text_prompt}'...")
-        target_classes = None
-        if isinstance(text_prompt, str):
-            target_classes = [text_prompt]
-        elif isinstance(text_prompt, list):
-            target_classes = text_prompt
-        return self.detector.detect(image=image, target_classes=target_classes, threshold=threshold)
+        class_names = None
+        if isinstance(text_prompt, str) and text_prompt:
+            class_names = [text_prompt]
+        elif isinstance(text_prompt, list) and text_prompt:
+            class_names = text_prompt
+        return self.detector.detect(image=rgb_image, class_names=class_names, threshold=threshold)
 
 
 class GraspModel:
@@ -381,87 +388,6 @@ class CoordinateTransformer:
         return optimized_xyz
 
 
-class InstructionParser:
-    """
-    中文指令解析器
-    - 在闭集模式下，严格要求指令中包含已知的核心实体。
-    - 在开放词汇模式下，更具灵活性。
-    """
-
-    def __init__(self, vocab_path="./config/vocab.yaml"):
-        try:
-            with open(vocab_path, 'r', encoding='utf-8') as f:
-                self.vocab = yaml.safe_load(f)
-        except FileNotFoundError:
-            raise FileNotFoundError(f"词典文件未找到: {vocab_path}！请检查路径。")
-        self.class_map_zh_to_en = {k: v for k, v in self.vocab['class_map'].items()}
-        self.class_map_en_to_zh = {v: k for k, v in self.vocab['class_map'].items()}
-
-        self.class_map_en_to_id = {v: i for i, v in enumerate(self.vocab['class_map'].values())}
-        self.class_map_zh_to_id = {k: i for i, k in enumerate(self.vocab['class_map'].keys())}
-
-    def parse(self, text: str, mode: str) -> dict:
-        """
-        解析用户输入的中文文本，生成一个结构化的查询计划
-        :param text: 用户输入的中文文本
-        :param mode: 解析模式，'closed_set' 或 'open_vocab'
-        :return: 结构化的查询计划字典
-        """
-        plan = {"mode": mode, "prompt": "", "class_id_filter": None, "constraints": []}
-        original_text = text
-
-        target_entity_zh, target_entity_en = None, None
-        attributes_en = []
-
-        # 1. 提取核心实体
-        for zh, en in self.vocab['class_map'].items():
-            if zh in text:
-                target_entity_zh, target_entity_en = zh, en
-                text = text.replace(zh, "")  # 移除已处理的核心词
-                break
-
-        # 2. 核心实体存在性检查 (根据模式)
-        if not target_entity_en:
-            if mode == 'closed_set':
-                print(f"解析失败: 在闭集模式下，指令 '{original_text}' 中未找到已知的核心物体。")
-                return None
-            else:  # open_vocab 模式
-                # 将清理后的整个指令作为prompt
-                plan['prompt'] = original_text.replace("的", "").replace("抓取", "").strip()
-                # 开放模式下也需要解析约束
-                self._extract_constraints(original_text, plan)
-                return plan
-
-        # 3. 提取属性
-        for attr_type, attr_dict in self.vocab['attributes'].items():
-            for zh, en in attr_dict.items():
-                if zh in text:
-                    attributes_en.append(en)
-                    # 属性也作为一种约束加入，用于后处理
-                    plan['constraints'].append({"type": attr_type, "value": en})
-
-        # 4. 构建 Prompt 和 Class ID Filter
-        if mode == 'closed_set':
-            plan['prompt'] = target_entity_en  # Prompt 只是核心实体
-            plan['class_id_filter'] = self.class_map_en_to_id.get(target_entity_en)
-        else:  # open_vocab
-            # Prompt 是属性和实体的组合
-            prompt_parts = attributes_en + [target_entity_en]
-            plan['prompt'] = " ".join(prompt_parts)
-
-        # 5. 提取约束
-        self._extract_constraints(original_text, plan)
-
-        return plan
-
-    def _extract_constraints(self, text, plan):
-        """辅助函数，用于从文本中提取约束。"""
-        for const_type, const_dict in self.vocab['constraints'].items():
-            for zh, en in const_dict.items():
-                if zh in text:
-                    plan['constraints'].append({"type": const_type, "value": en})
-
-
 class PostProcessor:
     """
     智能决策模块
@@ -551,3 +477,120 @@ class PostProcessor:
         print(f"Calculating 3D distance for bbox {bbox} (Not Implemented)")
         # 暂时用2D面积作为替代来模拟排序
         return -self._get_bbox_area(bbox)
+
+
+class InstructionParser:
+    """
+    中文指令解析器
+    - 在闭集模式下，严格要求指令中包含已知的核心实体。
+    - 在开放词汇模式下，更具灵活性。
+    """
+
+    def __init__(self, vocab_path="./config/vocab.yaml"):
+        try:
+            with open(vocab_path, 'r', encoding='utf-8') as f:
+                self.vocab = yaml.safe_load(f)
+        except FileNotFoundError:
+            raise FileNotFoundError(f"指令配置文件未找到: {vocab_path}！请检查路径。")
+        # 为了提高查找效率，将词典反转并合并
+        self._build_lookup_tables()
+
+    def _build_lookup_tables(self):
+        """构建高效的查找表，支持中英文到标准英文的映射。"""
+        self.entity_map = {}
+        for zh, en in self.vocab['class_map'].items():
+            self.entity_map[zh] = (zh, en)
+            self.entity_map[en.lower()] = (zh, en)  # 支持英文输入
+
+        self.attribute_map = {}
+        for attr_type, attr_dict in self.vocab['attributes'].items():
+            for zh, en in attr_dict.items():
+                self.attribute_map[zh] = (en, attr_type)
+                self.attribute_map[en.lower()] = (en, attr_type)
+
+        self.constraint_map = {}
+        for const_type, const_dict in self.vocab['constraints'].items():
+            for zh, en in const_dict.items():
+                self.constraint_map[zh] = (en, const_type)
+                self.constraint_map[en.lower()] = (en, const_type)
+        # self.class_map_zh_to_en = {k: v for k, v in self.vocab['class_map'].items()}
+        # self.class_map_en_to_zh = {v: k for k, v in self.vocab['class_map'].items()}
+
+        self.class_map_en_to_id = {v: i for i, v in enumerate(self.vocab['class_map'].values())}
+        self.class_map_zh_to_id = {k: i for i, k in enumerate(self.vocab['class_map'].keys())}
+
+    def parse(self, text: str, mode: str) -> dict | None:
+        """
+        解析用户输入的中文文本，生成一个结构化的查询计划
+        开集模型只能支持英文指令，
+        :param text: 用户输入的中文文本
+        :param mode: 解析模式，'closed_set' 或 'open_vocab'
+        :return: 结构化的查询计划字典
+        """
+        plan = {
+            "mode": mode,
+            "input_text": text,
+            "target_entity_en": None,
+            "target_entity_zh": None,
+            "prompt_for_model": "",
+            "class_id_filter": None,  # 仅闭集模式用
+            "constraints": []
+        }
+
+        # 1. 预处理
+        processed_text = text.lower().replace("的", "").replace("抓", "").replace("取", "").strip()
+
+        # 2. 查找核心实体
+        found_entity_key = None
+        for key in self.entity_map.keys():
+            if key in processed_text:
+                found_entity_key = key
+                plan["target_entity_zh"], plan["target_entity_en"] = self.entity_map[key]
+                processed_text = processed_text.replace(key, "").strip()  # 移除实体词
+                break
+
+        # 3. 查找属性和约束
+        attributes_en = []
+        # 按词长排序，优先匹配长词 (例如 "最左边" "最左")
+        all_modifiers = sorted(list(self.attribute_map.keys()) + list(self.constraint_map.keys()), key=len,
+                               reverse=True)
+
+        for key in all_modifiers:
+            if key in processed_text:
+                if key in self.attribute_map:
+                    en_val, type_val = self.attribute_map[key]
+                    attributes_en.append(en_val)
+                    plan["constraints"].append({"type": type_val, "value": en_val})
+                elif key in self.constraint_map:
+                    en_val, type_val = self.constraint_map[key]
+                    plan["constraints"].append({"type": type_val, "value": en_val})
+                processed_text = processed_text.replace(key, "").strip()
+
+        # 4. 根据模式构建最终plan
+        if mode == 'closed_set':
+            if not plan["target_entity_en"]:
+                logger.error(f"指令解析失败: 在闭集模式下，指令 '{text}' 中未找到已知物体")
+                return None
+            # 在闭集模式下，我们忽略属性，只关心核心实体
+            plan["prompt_for_model"] = plan["target_entity_zh"]
+            # 从英文名获取class_id
+            plan['class_id_filter'] = self.class_map_en_to_id.get(plan["target_entity_zh"])
+
+        elif mode == 'open_vocab':
+            if plan["target_entity_en"]:
+                # 场景1: 找到了已知实体 (例如 "红色的螺丝")
+                prompt_parts = attributes_en + [plan["target_entity_en"]]
+                plan["prompt_for_model"] = " ".join(prompt_parts)
+            elif processed_text:
+                # 场景2: 没有找到已知实体，将剩余部分作为未知实体 (例如 "那个订书机")
+                # 这里的 `processed_text` 已经是移除了所有已知修饰词后的部分
+                unknown_entity = processed_text
+                plan["target_entity_zh"] = unknown_entity  # 中文设为原始剩余文本
+                plan["target_entity_en"] = unknown_entity  # 英文也暂时设为它 (假设输入是英文或中英混合)
+
+                prompt_parts = attributes_en + [unknown_entity]
+                plan["prompt_for_model"] = " ".join(prompt_parts)
+            else:
+                logger.error(f"指令解析失败: 开放模式下指令 '{text}' 无法识别出任何有效目标")
+                return None
+        return plan

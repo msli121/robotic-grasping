@@ -1,40 +1,37 @@
 # --- 1. 核心实体中英文映射 ---
 # 闭集模型训练时使用的类别，指令解析的核心
 class_map:
-  爱心方块: Heart Block
-  梯形方块: Trapezoid Block
-  正方方块: Cube
-  # 注意：你的中文列表里有“正方方块”和“三角方块”，但英文列表里有“Cube”和“Triangular Prism”，我将它们对应起来
-  三角方块: Triangular Prism
-  五边形方块: Pentagonal Prism
-  菱形方块: Rhombic Prism
-  十字方块: Cross Block
-  六边形方块: Hexagonal Prism
-  圆柱体: Cylinder
-  五角星: Star Polyhedron
-  中性笔: Ballpoint Pen
-  美工刀: Utility Knife
-  多功能小刀: Multi-tool Knife
-  直角工具刀: Right-angle Cutter
-  药膏: Ointment Tube
-  打火机: Lighter
-  U盘: USB Flash Drive
-  激光笔: Laser Pointer
-  电池: Battery
-  胶带: Adhesive Tape # 胶带出现了两次，统一映射
-  水平仪: Spirit Level
-  螺丝刀: Screwdriver
-  铰链: Hinge
-  螺丝: Screw
-  螺母: Nut
-  弹簧: Compression Spring
-  夹子: Clip
-  牙刷: Toothbrush
-  开关配件: electronic switch
+  爱心方块: love square
+  梯形方块: trapezoid square
+  正方方块: square block
+  三角方块: triangle square
+  五边形方块: pentagon square
+  菱形方块: rhombus square
+  十字方块: cross square
+  六边形方块: hexagon square
+  圆柱体: cylinder
+  五角星: five-pointed star
+  中性笔: ballpoint pen
+  水果刀: fruit knife
+  折叠小刀: folding knife
+  内六角扳手: hex key
+  药膏: ointment
+  打火机: lighter
+  U盘: usb drive
+  激光笔: laser pointer
+  电池: battery
+  胶带: tape
+  水平仪: level
+  螺丝刀: screwdriver
+  铰链: hinge
+  螺丝: screw
+  螺母: nut
+  弹簧: spring
+  木夹: wooden clip
+  牙刷: toothbrush
+  电子开关: electronic switch
   马克笔: marker pen
-  涂卡笔: marking pen
-  # 注意：你的英文列表里有 "2B pencil"，但中文没有对应，我暂时不加入，你可以按需添加
-  # 铅笔: 2B pencil
+  2B铅笔: 2b pencil
 
 # --- 2. 可识别的视觉属性 ---
 # 用于开放词汇模式的 Prompt 构建，以及闭集模式的后处理筛选

@@ -296,7 +296,7 @@ def run():
     input_channels = 1 * args.use_depth + 3 * args.use_rgb
     network = get_network(args.network)
     # 选择改进后的网络
-    if args.network.lower() in ['grconvnet_mas', 'grconvnet_goa']:
+    if args.network.lower() in ['grconvnet_goa']:
         net = network(
             input_channels=input_channels,  # 输入通道数
             dropout=bool(args.use_dropout),  # 是否使用dropout

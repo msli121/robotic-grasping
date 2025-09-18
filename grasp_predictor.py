@@ -31,7 +31,7 @@ class GraspPredictor(object):
 
     def load_model(self):
         logger.info(f"Loading grasp predictor model from: {self.model_path}")
-        if  os.path.exists(self.model_path):
+        if os.path.exists(self.model_path):
             self.model = torch.load(self.model_path)
             logger.info("Grasp predictor model loaded successfully.")
             self.device = get_device(False)
@@ -79,8 +79,9 @@ class GraspPredictor(object):
                         'angle': g.angle,
                         'width': g.width,
                         'length': g.length,
-                        'center': list(g.center),
-                        'points': points_cropped_xy,
+                        'center': np.asarray([g.center[1], g.center[0]]),  # (x, y) 格式
+                        'quality': q_img[int(g.center[0]), int(g.center[1])],
+                        'points': np.asarray(points_cropped_xy),  # (x, y) 格式
                     }
                     grasp_infos.append(grasp_info)
             return grasp_infos, q_img, ang_img, width_img
@@ -89,6 +90,7 @@ class GraspPredictor(object):
 def parse_args():
     parser = argparse.ArgumentParser(description='Evaluate network')
     default_net_path = r'D:\PycharmProjects\robotic-grasping\trained-models\cornell-randsplit-rgbd-grconvnet3-drop1-ch32\epoch_19_iou_0.98'
+    # default_net_path = r'D:\PycharmProjects\robotic-grasping\logs\20250907_1739_training_cornell_grconvnet_goa_aff\best_iou_epoch_16_iou_0.9492'
     # default_net_path = r'D:\PycharmProjects\robotic-grasping\trained-pretrained_models\jacquard-rgbd-grconvnet3-drop0-ch32\epoch_48_iou_0.93'
     parser.add_argument('--network', type=str, default=default_net_path,
                         help='Path to saved network to evaluate')

@@ -25,6 +25,7 @@ class ControlPanel(QFrame):
     # 任务控制
     mode_changed_signal = pyqtSignal(str)  # 发射模式名称: "open_vocab" 或 "closed_set"
     instruction_signal = pyqtSignal(str)
+    clear_instruction_signal = pyqtSignal() # 用于通知后端清空指令
     strategy_signal = pyqtSignal(str)
 
     # 执行控制
@@ -105,9 +106,20 @@ class ControlPanel(QFrame):
         layout.addWidget(QLabel("文本指令:"))
         self.instruction_text = QTextEdit()
         self.instruction_text.setPlaceholderText("在此输入指令...")
-        self.send_inst_button = QPushButton("发送指令")
         layout.addWidget(self.instruction_text)
-        layout.addWidget(self.send_inst_button)
+
+        # 创建一个水平布局来放置两个按钮
+        button_hbox = QHBoxLayout()
+        # 创建“清空指令”按钮
+        self.clear_inst_button = QPushButton("清空指令")
+        # 创建“发送指令”按钮
+        self.send_inst_button = QPushButton("发送指令")
+        # 将两个按钮添加到水平布局中
+        button_hbox.addWidget(self.clear_inst_button)
+        button_hbox.addWidget(self.send_inst_button)
+        # 将这个水平布局添加到主垂直布局中
+        layout.addLayout(button_hbox)
+
         return frame
 
     def _create_exec_frame(self):
@@ -153,12 +165,27 @@ class ControlPanel(QFrame):
 
         # 任务控制
         self.mode_group.buttonClicked.connect(self._on_mode_changed)  # 连接到内部槽
+        self.clear_inst_button.clicked.connect(self._on_clear_instruction_clicked)
         self.send_inst_button.clicked.connect(lambda: self.instruction_signal.emit(self.instruction_text.toPlainText()))
         self.strategy_combo.currentTextChanged.connect(self.strategy_signal.emit)
 
         # 执行控制
         self.execute_button.clicked.connect(self.execute_grasp_signal.emit)
         self.stop_button.clicked.connect(self.stop_signal.emit)
+
+    @pyqtSlot()
+    def _on_clear_instruction_clicked(self):
+        """
+        “清空指令”按钮被点击时触发的槽函数。
+        负责执行UI清理并通知后端。
+        """
+        # 1. 清空文本输入框 (UI操作)
+        self.instruction_text.clear()
+        # 2. 发射信号，通知后端状态已清空
+        self.clear_instruction_signal.emit()
+        # 3. (未来可扩展) 在这里添加其他您需要的UI功能
+        # 例如，将焦点重新设置回文本框
+        self.instruction_text.setFocus()
 
     @pyqtSlot()
     def _on_mode_changed(self):

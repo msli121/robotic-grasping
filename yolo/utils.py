@@ -247,10 +247,6 @@ def batch_convert_json_to_txt(input_json_dir, output_txt_dir, class_txt_path):
         class_names = [line.strip() for line in f.readlines() if line.strip()]
     class_map = {name: i for i, name in enumerate(class_names)}
 
-    expect_nums = []
-    for i in range(1805):
-        expect_nums.append(i)
-
     json_files = glob.glob(os.path.join(input_json_dir, '*.json'))
     json_files.sort()
     for json_file in json_files:
@@ -406,6 +402,31 @@ def json_to_yolo(json_file: str, txt_file: str, label_map: dict):
         f.write("\n".join(lines))
 
 
+def replace_class_name(label_dir):
+    """
+    替换标签目录下所有文件中的类名
+    Args:
+        label_dir (str): 标签目录路径
+    """
+    if not os.path.exists(label_dir):
+        print(f"输入目录不存在: {label_dir}")
+        return
+    # 获取指定目录下所有的json文件
+    json_files = [os.path.join(label_dir, f) for f in os.listdir(label_dir) if f.endswith('.json')]
+    for json_file in json_files:
+        with open(json_file, 'r', encoding='utf-8') as f:
+            json_data = json.load(f)
+        for shape in json_data['shapes']:
+            shape['label'] = shape['label'].replace('直角工具刀', '内六角扳手')
+            shape['label'] = shape['label'].replace('多功能小刀', '折叠小刀')
+            shape['label'] = shape['label'].replace('美工刀', '水果刀')
+            shape['label'] = shape['label'].replace('开关配件', '电子开关')
+            shape['label'] = shape['label'].replace('涂卡笔', '2B铅笔')
+            shape['label'] = shape['label'].replace('夹子', '木夹')
+        with open(json_file, 'w', encoding='utf-8') as f:
+            json.dump(json_data, f, ensure_ascii=False, indent=4)
+
+
 if __name__ == '__main__':
     # 对应原始自制数据集进行重命名
     # rename_images_and_labels('./data_origin')
@@ -414,6 +435,10 @@ if __name__ == '__main__':
     # augment_dataset('./data_origin/images', './data_origin/labels', './data_augmented/images',
     #                 './data_augmented/labels',
     #                 num_augments=3)
+
+    # 替换类名
+    label_dir = r'D:\datasets\paper_dataset\rgb'
+    replace_class_name(label_dir)
 
     # 将JSON格式转为txt
     input_json_dir = r'D:\datasets\paper_dataset\rgb'

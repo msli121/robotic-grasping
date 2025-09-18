@@ -74,10 +74,11 @@ class MainWindow(QMainWindow):
         cp.connect_gripper_signal.connect(self.backend.connect_gripper)
         cp.disconnect_gripper_signal.connect(self.backend.disconnect_gripper)
         cp.instruction_signal.connect(self.backend.process_instruction)
+        cp.clear_instruction_signal.connect(self.backend.clear_instruction_context)
         cp.strategy_signal.connect(self.backend.set_selection_strategy)
         cp.execute_grasp_signal.connect(self.backend.execute_grasp)
         cp.stop_signal.connect(self.backend.stop_all_tasks)
-        # --- 新增: 连接模式切换信号 ---
+        # --- 连接模式切换信号 ---
         cp.mode_changed_signal.connect(self.backend.set_mode)
         self.cleanup_signal.connect(self.backend.cleanup)
 

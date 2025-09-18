@@ -1,10 +1,10 @@
 path: D:\PycharmProjects\robotic-grasping\yolo\datasets\paper # dataset root dir
-train: train  # train images (relative to 'path') 128 images
-val: val  # val images (relative to 'path') 128 images
-test:  # test images (optional)
+train: train
+val: val
+test:  # optional
 
 # 类别数
-nc: 32
+nc: 31
 # 类别名称
 names:
   0: 爱心方块
@@ -18,9 +18,9 @@ names:
   8: 圆柱体
   9: 五角星
   10: 中性笔
-  11: 美工刀
-  12: 多功能小刀
-  13: 直角工具刀
+  11: 水果刀
+  12: 折叠小刀
+  13: 内六角扳手
   14: 药膏
   15: 打火机
   16: U盘
@@ -33,9 +33,8 @@ names:
   23: 螺丝
   24: 螺母
   25: 弹簧
-  26: 夹子
+  26: 木夹
   27: 牙刷
-  28: 开关配件
+  28: 电子开关
   29: 马克笔
-  30: 涂卡笔
-  31: 胶带
+  30: 2B铅笔

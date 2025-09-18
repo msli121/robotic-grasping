@@ -19,7 +19,7 @@ class DrawingUtils:
     GRASP_COLOR = QColor("#BF616A")  # 红色
     TEXT_COLOR = QColor("#ECEFF4")  # 浅灰白色
 
-    DETECTION_PEN = QPen(DETECTION_COLOR, 2, Qt.SolidLine)
+    DETECTION_PEN = QPen(DETECTION_COLOR, 1, Qt.SolidLine)
     GRASP_PEN = QPen(GRASP_COLOR, 2, Qt.SolidLine)
     TEXT_PEN = QPen(TEXT_COLOR, 1, Qt.SolidLine)
 
@@ -81,13 +81,13 @@ class DrawingUtils:
         绘制所有抓取预测结果，包括由四个点构成的矩形和抓取质量。
         """
         for grasp in grasps:
-            points_yx = grasp.get('points')  # 后端传来的是 (y, x) 顺序
+            points_xy = grasp.get('points')  # (x, y) 顺序
             quality = grasp.get('quality', 0.0)
-            if not points_yx or len(points_yx) != 4:
+            if not points_xy or len(points_xy) != 4:
                 continue
 
-            # 需要 QPointF(x, y) 顺序
-            q_points = [QPointF(p[0], p[1]) for p in points_yx]
+            # QPointF 需要(x, y)顺序
+            q_points = [QPointF(p[0], p[1]) for p in points_xy]
             polygon = QPolygonF(q_points)
 
             painter.setBrush(Qt.NoBrush)

@@ -3,6 +3,7 @@
 # @File       : train_yoloe.py
 # @Description:
 import json
+import os
 import time
 import traceback
 
@@ -16,7 +17,7 @@ from hardware.camera import RealSenseCamera
 def train_yoloe():
     # Initialize a detection model from a config
     # yaml_config = r'D:\PycharmProjects\robotic-grasping\yolo\model_config\yoloe-v8s.yaml'
-    yaml_config = r'D:\PycharmProjects\robotic-grasping\yolo\model_config\yoloe-11.yaml'
+    yaml_config = r'D:\PycharmProjects\robotic-grasping\yolo\model_config\yoloe-v11s.yaml'
     model = YOLOE(yaml_config)
     # model = YOLOE(r'D:\PycharmProjects\robotic-grasping\yolo\pretrained_models\yoloe-11s-seg.pt')
 
@@ -25,17 +26,37 @@ def train_yoloe():
     pt_path = r'D:\PycharmProjects\robotic-grasping\yolo\pretrained_models\yoloe-11s-seg.pt'
     model.load(pt_path)
 
+    # Fine-tune detection dataset
+    filename = os.path.basename(pt_path).split('.')[0]
+    now_str = time.strftime("%Y%m%d_%H%M")
     dataset_yaml_path = r'D:\PycharmProjects\robotic-grasping\yolo\datasets\paper\dataset.yaml'
-    # Fine-tune on your detection dataset
-    now_str = time.strftime("%Y%m%d")
     results = model.train(
         data=dataset_yaml_path,  # Detection dataset
-        epochs=60,
-        patience=15,
+        trainer=YOLOEPETrainer,
+        epochs=150,  # 增加训练周期到 150
+        patience=30,  # 增加提前停止的耐心
+        close_mosaic=10,  # 在最后10个epoch关闭mosaic
         batch=16,
         save_period=10,
-        name=f"train_yoloe_{now_str}_",
-        trainer=YOLOEPETrainer,  # <- Important: use detection trainer
+        name=f"train_{filename}_{now_str}_",
+
+        # --- 数据增强组合 ---
+        # --- 1. 调整几何变换强度 ---
+        degrees=15.0,  # 随机旋转 +/- 15 度 (更合理)
+        translate=0.1,  # 随机平移 +/- 10% (更合理)
+        scale=0.2,  # 随机缩放 +/- 20% (可以适当增大)
+        shear=2.0,  # 随机错切 +/- 2 度 (保持较小)
+        perspective=0.0,  # 对于工业平面场景，通常不需要透视变换
+        flipud=0.0,  # 关闭垂直翻转，除非你的物体上下对称
+        fliplr=0.5,  # 保留水平翻转
+        # --- 2. 颜色空间变换 (保持或微调) ---
+        hsv_h=0.015,
+        hsv_s=0.7,
+        hsv_v=0.4,
+        # --- 3. 开启高级增强---
+        mosaic=1.0,  # 开启 Mosaic 数据增强 (将4张图拼接成一张)
+        mixup=0.1,  # 以 10% 的概率开启 MixUp (将两张图混合)
+        copy_paste=0.1  # 以 10% 的概率开启 Copy-Paste (复制物体实例)
     )
 
     print("\nTraining completed.")
@@ -47,7 +68,6 @@ def train_yoloe():
 
     # 构造结果字典
     summary = {
-        "dataset": dataset_yaml_path,
         "epochs_trained": 80,
         "batch_size": 16,
         "results_directory": str(results.save_dir),
@@ -75,10 +95,10 @@ def train_yoloe():
 
 def predict_yoloe():
     # Initialize a YOLOE model
-    # model = YOLOE(r"D:\PycharmProjects\robotic-grasping\yolo\runs\detect\train_yoloe_20250915_5\weights\best.pt")
+    # model = YOLOE(r"D:\PycharmProjects\robotic-grasping\yolo\runs\detect\train_yoloe-11s-seg_20250917_2313_\weights\best.pt")
     model = YOLOE(r"D:\PycharmProjects\robotic-grasping\yolo\pretrained_models\yoloe-11s-seg.pt")
     # model = YOLOE(r"D:\PycharmProjects\robotic-grasping\yolo\pretrained_models\yoloe-11s-seg-pf.pt")
-    model.to('cuda:0')
+    # model.to('cuda:0')
     # Set text prompt to detect person and bus. You only need to do this once after you load the model.
 
     camera = RealSenseCamera()
@@ -97,10 +117,10 @@ def predict_yoloe():
             bgr_frame = cv2.cvtColor(rgb_frame, cv2.COLOR_RGB2BGR)
 
             # inference
-            names = ["toothbrush", "crayon", "battery"]
+            names = ["red toothbrush", "battery"]
             model.set_classes(names, model.get_text_pe(names))
             # model.set_classes(names)
-            results = model.predict(bgr_frame, conf=0.2)
+            results = model.predict(bgr_frame, conf=0.4)
 
             # visualize
             # results[0].show()

@@ -4,14 +4,14 @@
 
 # --- 1. 文件与路径配置 ---
 paths:
-  # 闭集专家模型 (例如, 针对特定零件训练的YOLOE)
-  closed_set_model: "D:/PycharmProjects/robotic-grasping/yolo/runs/detect/train_yoloe_20250915_5/weights/best.pt"
+  # 闭集专家模型 (自定义特定零件训练的YOLOE)
+  closed_set_model: "D:/PycharmProjects/robotic-grasping/yolo/runs/detect/train_yoloe-11s-seg_20250917_2313_/weights/best.pt"
 
   # 开放词汇模型 (例如, YOLOE-PF)
   open_vocab_model: "D:/PycharmProjects/robotic-grasping/yolo/pretrained_models/yoloe-11s-seg-pf.pt"
 
   # 抓取姿态估计模型 (例如, 改进GR-ConvNet的GOA-NET)
-  grasp_model: "D:/PycharmProjects/robotic-grasping/trained-models/cornell-randsplit-rgbd-grconvnet3-drop1-ch32/epoch_19_iou_0.98"
+  grasp_model: "D:/PycharmProjects/robotic-grasping/logs/20250918_0853_training_cornell_224_goanet_upconv+unet/best_model_epoch_30_iou_0.9492.pth"
 
   # 指令解析器的词典文件
   vocab: "./config/vocab.yaml"

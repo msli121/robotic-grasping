@@ -17,7 +17,8 @@ ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 def parse_args():
     """解析命令行参数"""
     parser = argparse.ArgumentParser(description="Train YOLOv8 on a custom dataset.")
-    model_path = r'D:\PycharmProjects\robotic-grasping\yolov8\models\yolov8s.pt'
+    # model_path = r'D:\PycharmProjects\robotic-grasping\yolov8\models\yolov8s.pt'
+    model_path = r'D:\PycharmProjects\robotic-grasping\yolo\pretrained_models\yolo11s.pt'
     parser.add_argument('--model-cfg', type=str, default=model_path,
                         help='Starting model configuration, e.g., yolov8n.pt')
     parser.add_argument('--data-cfg', type=str, default=r'datasets/paper/dataset.yaml',
@@ -50,33 +51,36 @@ def train(args):
     print(f"Using dataset: {dataset_yaml_path}")
 
     # --- 3. 执行训练 ---
-    now_str = time.strftime("%Y%m%d")
+    filename = os.path.basename(model_config_path).split('.')[0]
+    now_str = time.strftime("%Y%m%d_%H%M")
     results = model.train(
         data=dataset_yaml_path,
-        workers=args.workers,
-        epochs=args.epochs,
-        batch=args.batch_size,
+        workers=4,
+        epochs=150,  # 增加训练周期到 150
+        patience=30,  # 增加提前停止的耐心
+        close_mosaic=10,  # 在最后10个epoch关闭mosaic
         save=True,
-        save_period=args.save_period,
-        name=f"{args.name}_{now_str}_",
+        save_period=10,
+        name=f"train_{filename}_{now_str}_",
         exist_ok=True,  # 覆盖同名实验
 
-        # # --- 数据增强组合 ---
-        # degrees=20,  # 旋转角度范围
-        # translate=0.1,  # 平移范围
-        # scale=0.1,  # 缩放范围
-        # shear=2.0,  # 剪切角度范围
-        # perspective=0.0,  # 透视变换范围
-        # flipud=0.5,  # 上下翻转
-        # fliplr=0.5,  # 水平翻转概率
-        #
-        # hsv_h=0.015,  # HSV 颜色空间的色调变化范围
-        # hsv_s=0.7,  # 饱和度变化范围
-        # hsv_v=0.4,  # 亮度变化范围
-        #
-        # # --- 可选的高级增强 ---
-        # # mixup=0.1,
-        # # copy_paste=0.1
+        # --- 数据增强组合 ---
+        # --- 1. 调整几何变换强度 ---
+        degrees=15.0,  # 随机旋转 +/- 15 度 (更合理)
+        translate=0.1,  # 随机平移 +/- 10% (更合理)
+        scale=0.2,  # 随机缩放 +/- 20% (可以适当增大)
+        shear=2.0,  # 随机错切 +/- 2 度 (保持较小)
+        perspective=0.0,  # 对于工业平面场景，通常不需要透视变换
+        flipud=0.0,  # 关闭垂直翻转，除非你的物体上下对称
+        fliplr=0.5,  # 保留水平翻转
+        # --- 2. 颜色空间变换 (保持或微调) ---
+        hsv_h=0.015,
+        hsv_s=0.7,
+        hsv_v=0.4,
+        # --- 3. 开启高级增强---
+        mosaic=1.0,  # 开启 Mosaic 数据增强 (将4张图拼接成一张)
+        mixup=0.1,  # 以 10% 的概率开启 MixUp (将两张图混合)
+        copy_paste=0.1  # 以 10% 的概率开启 Copy-Paste (复制物体实例)
     )
 
     print("\nTraining completed.")

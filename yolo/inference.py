@@ -86,6 +86,7 @@ class YOLOEDetector(object):
         logger.info(f"Loading YOLOE model from: {self.model_path}")
         if self.model_path and os.path.exists(self.model_path):
             self.model = YOLOE(self.model_path)
+            self.model.to('cuda:0')
             logger.info("YOLOE model loaded successfully.")
         else:
             logger.error(f"YOLOE model file not found: {self.model_path}")
@@ -95,13 +96,15 @@ class YOLOEDetector(object):
         """
       对单张图像进行目标检测，并返回结构化的结果
 
-        :param image: 输入图像 (NumPy array, BGR或RGB格式)。
+        :param image: 输入图像RGB (NumPy array, RGB格式)。
         :param class_names: (可选) 一个包含目标类别名称的列表，只返回这些类别的检测结果。
                                如果为 None，则返回所有检测到的类别。
         :param threshold: (可选) 置信度阈值，低于此值的检测结果将被忽略。
         :return:  {'bbox': (x1, y1, x2, y2), 'score': float, 'class_id': int, 'class_name': str}
         """
-        results = self.model.predict(image, verbose=False)
+        # RGB -> BGR
+        bgr_image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+        results = self.model.predict(bgr_image, verbose=True, conf=threshold)
         if not results:
             return []
         detections = []
@@ -139,6 +142,7 @@ class YOLOETextPromptDetector(object):
         logger.info(f"Loading YOLOE model from: {self.model_path}")
         if self.model_path and os.path.exists(self.model_path):
             self.model = YOLOE(self.model_path)
+            self.model.to('cuda:0')
             logger.info("YOLOE model loaded successfully.")
         else:
             logger.error(f"YOLOE model file not found: {self.model_path}")
@@ -240,7 +244,8 @@ def visualize_camera_detection(model_path: str, font_path: str):
 
 
 if __name__ == '__main__':
-    MODEL_PATH = r"D:\PycharmProjects\robotic-grasping\yolov8\runs\detect\train_20250914_144614\weights\best.pt"
+    # MODEL_PATH = r"D:\PycharmProjects\robotic-grasping\yolo\runs\detect\train_yolo11s_20250917_1325_\weights\best.pt"
+    MODEL_PATH = r"D:\PycharmProjects\robotic-grasping\yolo\runs\detect\train_yolo11s_20250917_2205_\weights\best.pt"
     # 字体文件路径，或者更换为其他中文字体路径
     FONT_PATH = "C:/Windows/Fonts/simhei.ttf"
     if not os.path.isfile(MODEL_PATH):

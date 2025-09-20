@@ -31,13 +31,14 @@ class DensorRobot:
         try:
             # 通过检查socket文件描述符判断连接状态
             return self.tcp_client is not None and self.tcp_client.fileno() != -1
-        except:
+        except Exception as e:
+            print(f"检查连接状态时出错: {e}")
             return False
 
     def connect(self) -> bool:
         try:
             # 设置超时时间
-            self.tcp_client.settimeout(10)
+            self.tcp_client.settimeout(60)
             self.tcp_client.connect((self.host, self.port))
             self.recv_thread = threading.Thread(target=self.receive_message)  # 创建接收消息的线程
             self.recv_thread.daemon = True  # 设置线程为守护线程
@@ -78,8 +79,8 @@ class DensorRobot:
     def rotate_relative_angle(self, angle, j_num=6):
         """
         发送相对角度旋转 第六轴上，只针对平面抓取
-        :param j_num: 旋转轴
         :param angle: 旋转角度, 单位为度
+        :param j_num: 旋转轴
         """
         if angle is None:
             return

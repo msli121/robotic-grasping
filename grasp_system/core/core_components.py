@@ -3,6 +3,7 @@
 # @File       : core_components.py
 # @Description: 包含了所有硬件和模型模块的核心组件
 import logging
+import math
 import os
 import time
 
@@ -127,6 +128,8 @@ class RobotArmController:
 
     def connect(self) -> bool:
         self.connected = self.robot.connect()
+        if self.connected:
+            logger.info("[RobotArm] Robot arm connected.")
         return self.connected
 
     def disconnect(self):
@@ -153,6 +156,23 @@ class RobotArmController:
         time.sleep(1.5)
         return True
 
+    def rotate_relative_angle(self, angle: float = 0.0, j_num: int = 6):
+        """
+        旋转机械臂的指定关节
+        :param angle: 旋转角度，单位度
+        :param j_num: 关节编号
+        """
+        logger.info(f"[RobotArm] Rotate joint {j_num} by {angle} degrees")
+        self.robot.rotate_relative_angle(angle, j_num)
+        time.sleep(1)
+        return True
+
+    def get_current_position(self) -> list:
+        """
+        获取机器人当前位置
+        """
+        return self.robot.get_current_position()
+
 
 class RobotPlanner:
     """
@@ -164,47 +184,77 @@ class RobotPlanner:
         self.arm = arm
         self.gripper = gripper
 
-    def execute_grasp_sequence(self, robot_xyz: list, log_callback):
+    def execute_grasp_sequence(self, robot_pose: np.array, angle=0.0, log_callback=None):
         """
         执行完整的抓取动作序列, 并通过回调函数记录每一步日志。
-        :param robot_xyz: list (x,y,z) 目标抓取的xyz坐标，单位m
+        :param robot_pose: (x,y,z,rx, ry, rz) 抓取点姿态，单位mm
+        :param angle: 旋转角度，单位弧度，抓取模型预测出来的角度
         :param log_callback: 用于发射日志信号的函数
         """
-        robot_xyz = list(robot_xyz)
-        # m -> mm
-        for i in range(3):
-            robot_xyz[i] *= 1000
-        robot_pose = robot_xyz + self.arm.home_pose[3:]
+        if not len(robot_pose) == 7 or max(robot_pose) < 10:
+            log_callback("[错误] 机械臂坐标姿态异常")
+            return
+        robot_pose = list(robot_pose)
+        if not len(robot_pose) == 7 or max(robot_pose) < 10:
+            log_callback("[错误] 机械臂坐标姿态异常")
+            return
+        robot_pose = list(robot_pose)
 
         robot_pose[2] += 50  # 向上50mm
-        # 1. 移动到抓取前位置
+        # 1. 移动到抓取点上方
         log_callback("[信息] 1/7: 移动到抓取点上方...")
-        if not self.arm.move_to(robot_pose): return False
+        if not self.arm.move_to(robot_pose):
+            log_callback(f"[错误] 1/7: 移动到抓取点上方失败")
+            return False
 
         # 2. 张开夹爪
         log_callback("[信息] 2/7: 张开夹爪...")
-        if not self.gripper.open(): return False
+        if not self.gripper.open():
+            log_callback(f"[错误] 2/7: 张开夹爪失败")
+            return False
+
+        # 判断是否需要旋转
+        if abs(angle) > 0.1:
+            log_callback("[信息] : 旋转角度...")
+            # 弧度转度，并且变换方向
+            self.arm.rotate_relative_angle(CoordinateTransformer.radian_to_degree(-angle), j_num=6)
+            cur_robot_pose = self.arm.get_current_position()
+            # 更新机械臂姿态
+            robot_pose[4:7] = cur_robot_pose[4:7]
 
         # 3. 下降到抓取位置
         robot_pose[2] -= 50  # 下降50mm
         log_callback("[信息] 3/7: 下降至目标...")
-        if not self.arm.move_to(robot_pose): return False
+        if not self.arm.move_to(robot_pose):
+            log_callback(f"[错误] 3/7: 下降至目标失败")
+            return False
 
         # 4. 闭合夹爪
         log_callback("[信息] 4/7: 闭合夹爪...")
-        if not self.gripper.close(): return False
+        if not self.gripper.close():
+            log_callback(f"[错误] 4/7: 闭合夹爪失败")
+            return False
 
         # 5. 抬升
         log_callback("[信息] 5/7: 抬升物体...")
-        if not self.arm.move_to(self.arm.place_target_pose): return False
+        if not self.arm.move_to(self.arm.home_pose):
+            log_callback(f"[错误] 5/7: 抬升物体失败")
+            return False
+        if not self.arm.move_to(self.arm.place_target_pose):
+            log_callback(f"[错误] 5/7: 移动到放置位置失败")
+            return False
 
         # 6. 张开夹爪
         log_callback("[信息] 6/7: 张开夹爪...")
-        if not self.gripper.open(): return False
+        if not self.gripper.open():
+            log_callback(f"[错误] 6/7: 张开夹爪失败")
+            return False
 
         # 7. 回到home pose
         log_callback("[信息] 7/7: 回到home pose...")
-        if not self.arm.go_home(): return False
+        if not self.arm.go_home():
+            log_callback(f"[错误] 7/7: 回到home pose失败")
+            return False
 
         return True
 
@@ -322,7 +372,7 @@ class CoordinateTransformer:
         :param u: 像素坐标u
         :param v: 像素坐标v
         :param depth_value: 深度值 m
-        :return: 相机坐标 [x, y, z]
+        :return: 相机坐标 [x, y, z] np.array
         """
         if self.camera_matrix is None:
             raise Exception("Camera matrix not loaded.")
@@ -334,8 +384,8 @@ class CoordinateTransformer:
         Zc = depth_value
         Xc = (u - cx) * Zc / fx
         Yc = (v - cy) * Zc / fy
-
-        return np.array([Xc, Yc, Zc])
+        camera_xyz = np.array([Xc, Yc, Zc])
+        return camera_xyz.flatten()
 
     def transform_pixel_to_base(self, u, v, depth_value) -> np.ndarray:
         """"
@@ -373,19 +423,66 @@ class CoordinateTransformer:
         return robot_base_xyz
 
     @staticmethod
-    def optimize_base_pose(base_xyz: np.ndarray) -> np.ndarray:
+    def radian_to_degree(rad):
         """
-        优化基座标，修复误差
+        将输入的弧度值转换到-pi/2到pi/2范围内，然后转换为对应的度数
+        参数:
+            rad: 输入的弧度值
+        返回:
+            float: 转换后的度数，范围在-90到90之间
+        异常:
+            TypeError: 当输入不是数值类型时抛出
+        """
+        # 检查输入是否为数值类型
+        if not isinstance(rad, (int, float)):
+            raise TypeError("输入必须是整数或浮点数")
+
+        # 将弧度转换到-pi/2到pi/2范围
+        # 使用公式: φ = θ - 2π × round(θ / π - 0.5)
+        mapped_rad = rad - 2 * math.pi * round(rad / math.pi - 0.5)
+
+        # 确保结果在-pi/2到pi/2范围内（处理可能的浮点误差）
+        if mapped_rad > math.pi / 2:
+            mapped_rad = math.pi - mapped_rad
+        elif mapped_rad < -math.pi / 2:
+            mapped_rad = -math.pi - mapped_rad
+        # 转换为度数
+        degree = math.degrees(mapped_rad)
+        # 结果四舍五入保留两位小数
+        degree = round(degree, 2)
+        return degree
+
+    @staticmethod
+    def optimize_and_convert2robot_pose(base_xyz: np.ndarray) -> np.ndarray:
+        """
+        优化并转为机械臂姿态
         :param base_xyz: 原始基座标 [x, y, z] 单位：m
-        :return: 优化后的基座标 [x, y, z] 单位：m
+        :return: 优化后的基座标 [x, y, z, rx, ry, rz, config] 单位：mm
         """
-        # 机械臂活动返回中心点
-        center_point = np.array([0.22, 0, 0])  # 根据实际情况修改
+        if max(base_xyz) > 1:
+            print("Warning: base_xyz values are too large, may be in meters instead of millimeters.")
+            raise Exception("base_xyz values are too large, may be in meters instead of millimeters.")
+        # 1. 将机械臂基坐标转换为mm
+        base_xyz_mm = base_xyz * 1000
+        # 机械臂活动中心点
+        center_point = np.array([220, 0, 0])  # 根据实际情况修改
         # xyz轴的缩放误差
-        xyz_scale = np.array([1.11496, 0.8479, 0.9253])  # 根据实际情况修改
+        xyz_scale = np.array([1.1, 0.84, 1.55])  # 根据实际情况修改
         # 应用缩放误差
-        optimized_xyz = center_point + (base_xyz - center_point) * xyz_scale
-        return optimized_xyz
+        optimized_xyz_mm = center_point + (base_xyz_mm - center_point) * xyz_scale
+        # z轴限制
+        optimized_xyz_mm[2] = max(optimized_xyz_mm[2], -30)
+        # y+ 时抓取姿态pose
+        y_plus_pose = [-164, 7, 84, 5]
+        # y- 时抓取姿态pose
+        y_minus_pose = [-163, -5, 83, 5]
+        if optimized_xyz_mm[1] < 0:
+            optimized_xyz_mm = np.concatenate((optimized_xyz_mm, y_minus_pose))
+        else:
+            optimized_xyz_mm = np.concatenate((optimized_xyz_mm, y_plus_pose))
+        optimized_xyz_mm = optimized_xyz_mm.flatten()
+        logger.info(f"优化后的机械臂姿态:{optimized_xyz_mm}")
+        return optimized_xyz_mm
 
 
 class PostProcessor:

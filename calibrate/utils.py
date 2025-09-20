@@ -493,6 +493,39 @@ def read_robot_poses(robot_post_file=None):
     return poses
 
 
+def radian_to_degree(rad):
+    """
+    将输入的弧度值转换到-pi/2到pi/2范围内，然后转换为对应的度数
+
+    参数:
+        rad: 输入的弧度值
+
+    返回:
+        float: 转换后的度数，范围在-90到90之间
+
+    异常:
+        TypeError: 当输入不是数值类型时抛出
+    """
+    # 检查输入是否为数值类型
+    if not isinstance(rad, (int, float)):
+        raise TypeError("输入必须是整数或浮点数")
+
+    # 将弧度转换到-pi/2到pi/2范围
+    # 使用公式: φ = θ - 2π × round(θ / π - 0.5)
+    mapped_rad = rad - 2 * math.pi * round(rad / math.pi - 0.5)
+
+    # 确保结果在-pi/2到pi/2范围内（处理可能的浮点误差）
+    if mapped_rad > math.pi / 2:
+        mapped_rad = math.pi - mapped_rad
+    elif mapped_rad < -math.pi / 2:
+        mapped_rad = -math.pi - mapped_rad
+
+    # 转换为度数
+    degree = math.degrees(mapped_rad)
+
+    return degree
+
+
 def test_process_position_files():
     # 定义文件路径
     captures_dir = r'D:\PycharmProjects\robotic-grasping\calibrate\captures'

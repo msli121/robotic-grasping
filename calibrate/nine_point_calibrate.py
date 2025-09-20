@@ -11,6 +11,7 @@ from scipy.optimize import least_squares
 from calibrate.utils import normalize_corner_order, robot_pose_to_homogeneous_matrix
 from hardware.camera import RealSenseCamera
 from robot.densor_robot import DensorRobot
+from robot.gripper_controller import GripperControllerWrapper
 
 
 # ==============================================================================
@@ -34,6 +35,36 @@ logger = setup_logger()
 np.set_printoptions(precision=8, suppress=True)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def map_x_to_z(x):
+    """
+    将x值从[110, 230]范围映射到z值[-8, -38]范围，x增大时z减小
+
+    参数:
+        x: 输入值，应在[110, 230]范围内
+
+    返回:
+        对应的z值，在[-8, -38]范围内
+
+    异常:
+        ValueError: 当x不在[110, 230]范围内时抛出
+    """
+    # 定义x和z的范围
+    min_x, max_x = 110, 230
+    min_z, max_z = -38, -8  # 注意z的最小值和最大值
+
+    # 检查x是否在有效范围内
+    if x >= max_x:
+        return min_z
+    if x <= min_x:
+        return max_z
+
+    # 计算线性映射，x增大时z减小
+    # 公式：z = max_z - (x - min_x) * (max_z - min_z) / (max_x - min_x)
+    z = max_z - (x - min_x) * (max_z - min_z) / (max_x - min_x)
+
+    return z
 
 
 # TCP 四点标定
@@ -173,14 +204,14 @@ def verify_transformation(M, points_A, points_B):
         p_B_actual = points_B[i]
         error = np.linalg.norm(p_B_predicted - p_B_actual)
         errors.append(error)
-        logger.info(
+        print(
             f"点 {i + 1}: 实际 P_base = {p_B_actual}, 预测 P_base = {p_B_predicted}, 误差 = {error * 1000:.4f} mm")
     errors = np.array(errors)
-    logger.info("\n" + "=" * 20 + " 验证结果总结 " + "=" * 20)
-    logger.info(f"平均重投影误差: {np.mean(errors) * 1000:.4f} mm")
-    logger.info(f"最大重投影误差: {np.max(errors) * 1000:.4f} mm")
-    logger.info(f"误差标准差: {np.std(errors) * 1000:.4f} mm")
-    logger.info(f"RMSE 误差: {np.sqrt(np.mean(errors ** 2)) * 1000:.4f} mm")
+    print("\n" + "=" * 20 + " 验证结果总结 " + "=" * 20)
+    print(f"平均重投影误差: {np.mean(errors) * 1000:.4f} mm")
+    print(f"最大重投影误差: {np.max(errors) * 1000:.4f} mm")
+    print(f"误差标准差: {np.std(errors) * 1000:.4f} mm")
+    print(f"RMSE 误差: {np.sqrt(np.mean(errors ** 2)) * 1000:.4f} mm")
 
 
 class CameraDataCollector:
@@ -213,9 +244,9 @@ class CameraDataCollector:
                                         [0, 0, 1]])
             self.dist_coeffs = np.array(self.intrinsics.coeffs)
 
-            logger.info("Realsense相机连接成功。")
-            logger.info(f"使用相机内参: \n{self.cam_matrix}")
-            logger.info(f"使用相机畸变系数: {self.dist_coeffs}")
+            print("Realsense相机连接成功。")
+            print(f"使用相机内参: \n{self.cam_matrix}")
+            print(f"使用相机畸变系数: {self.dist_coeffs}")
             return True
         except Exception as e:
             logger.error(f"连接Realsense相机失败: {e}")
@@ -226,19 +257,19 @@ class CameraDataCollector:
         if self.pipeline:
             self.pipeline.stop()
             self.pipeline = None
-            logger.info("相机已关闭。")
+            print("相机已关闭。")
 
     def collect_by_solvepnp(self):
         """
         【方法一】: 使用solvePnP整体解算棋盘格位姿，计算所有角点的3D坐标。
         这是理论上更精确、更稳健的方法。
         """
-        logger.info("\n" + "=" * 20 + " 开始使用 solvePnP 方法采集数据 " + "=" * 20)
+        print("\n" + "=" * 20 + " 开始使用 solvePnP 方法采集数据 " + "=" * 20)
         if not self.connect_camera():
             return
 
-        logger.info("请确保棋盘格在相机视野内清晰可见，且机器人已移开。")
-        logger.info("3秒后将自动捕获图像...")
+        print("请确保棋盘格在相机视野内清晰可见，且机器人已移开。")
+        print("3秒后将自动捕获图像...")
         time.sleep(3)
 
         try:
@@ -285,14 +316,14 @@ class CameraDataCollector:
             M_camera_board[:3, :3] = R_camera_board
             M_camera_board[:3, 3] = tvec.flatten()
 
-            logger.info(f"成功计算出棋盘格位姿 M_camera_board:\n{M_camera_board}")
+            print(f"成功计算出棋盘格位姿 M_camera_board:\n{M_camera_board}")
 
             objp_hom = np.hstack((objp, np.ones((objp.shape[0], 1))))
             points_in_camera_all = (M_camera_board @ objp_hom.T).T[:, :3]
 
             cam_file = os.path.join(self.save_dir, "all_points_camera_solvepnp.txt")
             np.savetxt(cam_file, points_in_camera_all, fmt="%.8f")
-            logger.info(f"所有 {len(points_in_camera_all)} 个角点的相机3D坐标 (solvePnP法) 已保存至: {cam_file}")
+            print(f"所有 {len(points_in_camera_all)} 个角点的相机3D坐标 (solvePnP法) 已保存至: {cam_file}")
 
         finally:
             self.disconnect_camera()
@@ -302,12 +333,12 @@ class CameraDataCollector:
         【方法二】: 通过手动点击像素点，利用深度图反投影计算单个点的3D坐标。
         此方法更依赖单点深度测量的精度。
         """
-        logger.info("\n" + "=" * 20 + " 开始使用【自动角点识别+反投影法】采集数据 " + "=" * 20)
+        print("\n" + "=" * 20 + " 开始使用【自动角点识别+反投影法】采集数据 " + "=" * 20)
         if not self.connect_camera():
             return
 
-        logger.info("请确保棋盘格在相机视野内清晰可见，且机器人已移开。")
-        logger.info("3秒后将自动捕获并处理图像...")
+        print("请确保棋盘格在相机视野内清晰可见，且机器人已移开。")
+        print("3秒后将自动捕获并处理图像...")
         time.sleep(3)
 
         try:
@@ -336,7 +367,7 @@ class CameraDataCollector:
             criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
             corners = cv2.cornerSubPix(gray_image, corners, (11, 11), (-1, -1), criteria)
 
-            logger.info(f"成功检测到并精化了 {len(corners)} 个角点。")
+            print(f"成功检测到并精化了 {len(corners)} 个角点。")
 
             # 角度归一化
             corners = normalize_corner_order(corners, chessboard_size)
@@ -371,14 +402,14 @@ class CameraDataCollector:
                 points_in_camera.append(point_camera)
                 valid_corners_uv.append((u, v))
 
-                logger.info(
+                print(
                     f"[反投影法] 角点 {i}: (u,v)=({u:.2f}, {v:.2f}) -> 深度={depth:.4f}m -> P_cam={point_camera}")
 
             # 4. 保存结果
             points_cam_arr = np.array(points_in_camera)
             cam_file = os.path.join(self.save_dir, "all_points_camera_projection.txt")
             np.savetxt(cam_file, points_cam_arr, fmt="%.8f")
-            logger.info(f"采集到的 {len(points_cam_arr)} 个有效相机3D坐标 (自动反投影法) 已保存至: {cam_file}")
+            print(f"采集到的 {len(points_cam_arr)} 个有效相机3D坐标 (自动反投影法) 已保存至: {cam_file}")
         finally:
             self.disconnect_camera()
 
@@ -400,7 +431,7 @@ def define_points_in_work_object_coordinate(pix_index=None, grid_size=0.018):
     返回:
     np.ndarray: Nx3 的数组，包含每个角点在工件坐标系下的 (x, y, z) 坐标。
     """
-    logger.info("--- 定义角点在工件坐标系(Wobj)下的坐标 ---")
+    print("--- 定义角点在工件坐标系(Wobj)下的坐标 ---")
     if pix_index is None:
         raise ValueError("pix_index 不能为空")
     if grid_size <= 0:
@@ -417,8 +448,8 @@ def define_points_in_work_object_coordinate(pix_index=None, grid_size=0.018):
     points_in_wobj[:, 1] = pix_index[:, 1] * grid_size  # Y = row * size
 
     # --- 验证步骤 ---
-    logger.info(f"选定的角点索引 (col, row):\n{pix_index}")
-    logger.info(f"计算出的工件坐标 (x, y, z) [米]:\n{points_in_wobj}")
+    print(f"选定的角点索引 (col, row):\n{pix_index}")
+    print(f"计算出的工件坐标 (x, y, z) [米]:\n{points_in_wobj}")
 
     return points_in_wobj
 
@@ -439,7 +470,7 @@ def transform_points_form_work2base(points_in_wobj=None, M_base_wobj=None):
     if points_in_wobj is None or M_base_wobj is None:
         raise ValueError("points_in_wobj 和 M_base_wobj 不能为空")
 
-    logger.info("\n--- 将Wobj坐标变换到基座(Base)坐标 ---")
+    print("\n--- 将Wobj坐标变换到基座(Base)坐标 ---")
 
     # 1. 将 (N, 3) 的点云转换为 (N, 4) 的齐次坐标形式
     num_points = points_in_wobj.shape[0]
@@ -454,8 +485,8 @@ def transform_points_form_work2base(points_in_wobj=None, M_base_wobj=None):
     points_in_base = points_in_base_hom[:, :3]
 
     # --- 验证步骤 ---
-    logger.info(f"使用的变换矩阵 M_base_wobj:\n{M_base_wobj}")
-    logger.info(f"计算出的基座坐标 (x, y, z) [米]:\n{points_in_base}")
+    print(f"使用的变换矩阵 M_base_wobj:\n{M_base_wobj}")
+    print(f"计算出的基座坐标 (x, y, z) [米]:\n{points_in_base}")
 
     return points_in_base
 
@@ -523,11 +554,11 @@ def calculate_tcp_by_sphere_fitting(list_flange_pose):
     optimal_tcp_offset = result.x[0:3]
     # 估计的参考点
     estimated_reference_point = result.x[3:6]
-    logger.info(f"最优的TCP偏移 (x, y, z): {optimal_tcp_offset}")
-    logger.info(f"估计的参考点 (Px, Py, Pz): {estimated_reference_point}")
+    print(f"最优的TCP偏移 (x, y, z): {optimal_tcp_offset}")
+    print(f"估计的参考点 (Px, Py, Pz): {estimated_reference_point}")
 
     # --- 【新增】误差分析环节 ---
-    logger.info("\n" + "=" * 20 + " 拟合误差分析 " + "=" * 20)
+    print("\n" + "=" * 20 + " 拟合误差分析 " + "=" * 20)
 
     # 用计算出的最优解，来重新计算每个点的TCP位置
     calculated_tcp_positions = [t + R @ optimal_tcp_offset for R, t in zip(rotations, translations)]
@@ -538,9 +569,9 @@ def calculate_tcp_by_sphere_fitting(list_flange_pose):
     errors_mm = errors_m * 1000.0  # 转换为毫米
 
     # 打印详细的每个点的残差
-    logger.info("--- 各姿态点的拟合残差 (单位: 毫米) ---")
+    print("--- 各姿态点的拟合残差 (单位: 毫米) ---")
     for i, error in enumerate(errors_mm):
-        logger.info(f"  姿态点 {i + 1}: 拟合误差 = {error:.4f} mm")
+        print(f"  姿态点 {i + 1}: 拟合误差 = {error:.4f} mm")
 
     # 计算并打包统计报告
     max_error = np.max(errors_mm)
@@ -554,10 +585,10 @@ def calculate_tcp_by_sphere_fitting(list_flange_pose):
     }
 
     # 打印最终的统计报告
-    logger.info("\n--- 最终拟合精度统计 (单位: 毫米) ---")
-    logger.info(f"  最大残差 (Max Residual Error): {max_error:.4f} mm")
-    logger.info(f"  平均残差 (Mean Residual Error): {mean_error:.4f} mm")
-    logger.info(f"  残差标准差 (Standard Deviation): {std_dev:.4f} mm")
+    print("\n--- 最终拟合精度统计 (单位: 毫米) ---")
+    print(f"  最大残差 (Max Residual Error): {max_error:.4f} mm")
+    print(f"  平均残差 (Mean Residual Error): {mean_error:.4f} mm")
+    print(f"  残差标准差 (Standard Deviation): {std_dev:.4f} mm")
 
     return optimal_tcp_offset, error_report
 
@@ -611,7 +642,7 @@ def do_calibrate_one_step():
         'save_dir': save_dir,
         'chessboard_size': chessboard_size,
         'chessboard_grid_size': 0.018,
-        'num_points': 9  # 仅用于单点法
+        'num_points': 9
     }
 
     # 定义目标角点索引
@@ -621,18 +652,31 @@ def do_calibrate_one_step():
         [0, 7], [4, 7], [7, 7]
     ])
 
-    # --- 2. 数据采集阶段 ---
-    # 运行其中一种方法，或者两种都运行以生成不同的数据文件
-    collector = CameraDataCollector(config)
+    points_in_base = [
+        [288.0685, 54.43882, -31.32687],
+        [288.0686, -6.361143, -30.49499],
+        [290.4363, -51.35270, -30.49504],
+        [227.2666, 51.17521, -23.19917],
+        [227.2665, -6.104365, -20.25524],
+        [230.7863, -49.36795, -21.27924],
+        [151.2325, 46.18402, -10.71933],
+        [150.3365, -6.743635, -8.543355],
+        [153.9844, -46.48726, -9.119241],
+    ]
+    points_in_base = np.asarray(points_in_base) / 1000
 
-    # === 运行方法一：SolvePnP ===
-    logger.info(">>> 正在执行SolvePnP数据采集...")
-    collector.collect_by_solvepnp()
-
-    # === 运行方法二：单点反投影 ===
-    logger.info(">>> ---------------------------------")
-    logger.info(">>> 正在执行单点反投影数据采集...")
-    collector.collect_by_single_point_projection()
+    # # --- 2. 数据采集阶段 ---
+    # # 运行其中一种方法，或者两种都运行以生成不同的数据文件
+    # collector = CameraDataCollector(config)
+    #
+    # # === 运行方法一：SolvePnP ===
+    # print(">>> 正在执行SolvePnP数据采集...")
+    # collector.collect_by_solvepnp()
+    #
+    # # === 运行方法二：单点反投影 ===
+    # print(">>> ---------------------------------")
+    # print(">>> 正在执行单点反投影数据采集...")
+    # collector.collect_by_single_point_projection()
 
     # --- 3. 计算阶段 ---
     # 输入已知的 M_base_wobj
@@ -652,22 +696,9 @@ def do_calibrate_one_step():
     # points_in_base[:, 1] = points_in_base[:, 1] * xyz_scale[1]
     # points_in_base[:, 2] = points_in_base[:, 2] * xyz_scale[2]
 
-    points_in_base = [
-        [288.0685, 54.43882, -31.32687],
-        [288.0686, -6.361143, -30.49499],
-        [290.4363, -51.35270, -30.49504],
-        [227.2666, 51.17521, -23.19917],
-        [227.2665, -6.104365, -20.25524],
-        [230.7863, -49.36795, -21.27924],
-        [151.2325, 46.18402, -10.71933],
-        [150.3365, -6.743635, -8.543355],
-        [153.9844, -46.48726, -9.119241],
-    ]
-    points_in_base = np.asarray(points_in_base) / 1000
-
     # --- 4. 对比实验 ---
     # === 使用 SolvePnP 的数据进行计算 ===
-    logger.info("\n\n" + "#" * 20 + " 使用 SolvePnP 数据进行计算 " + "#" * 20)
+    print("\n\n" + "#" * 20 + " 使用 SolvePnP 数据进行计算 " + "#" * 20)
     cam_file_solvepnp = os.path.join(save_dir, "all_points_camera_solvepnp.txt")
     if os.path.exists(cam_file_solvepnp):
         all_points_in_camera = np.loadtxt(cam_file_solvepnp)
@@ -678,7 +709,7 @@ def do_calibrate_one_step():
             points_in_camera = all_points_in_camera[linear_indices]
             # 计算刚性变换
             M_base_camera = rigid_transform(points_in_camera, points_in_base)
-            logger.info(f"\n[SolvePnP法] 计算出的 M_base_camera:\n{M_base_camera}")
+            print(f"\n[SolvePnP法] 计算出的 M_base_camera:\n{M_base_camera}")
             np.savetxt(os.path.join(save_dir, 'M_base_camera_by_solvepnp.txt'), M_base_camera, delimiter=' ',
                        fmt='%.8f')
             verify_transformation(M_base_camera, points_in_camera, points_in_base)
@@ -688,7 +719,7 @@ def do_calibrate_one_step():
         logger.error(f"文件 {cam_file_solvepnp} 不存在，无法进行 SolvePnP 数据计算。")
 
     # === 使用单点反投影的数据进行计算 ===
-    logger.info("\n\n" + "#" * 20 + " 使用单点反投影数据进行计算 " + "#" * 20)
+    print("\n\n" + "#" * 20 + " 使用单点反投影数据进行计算 " + "#" * 20)
     cam_file_single = os.path.join(save_dir, "all_points_camera_projection.txt")
     if os.path.exists(cam_file_single):
         all_points_in_camera = np.loadtxt(cam_file_single)
@@ -701,7 +732,7 @@ def do_calibrate_one_step():
             M_base_camera = rigid_transform(points_in_camera, points_in_base)
             np.savetxt(os.path.join(save_dir, 'M_base_camera_by_projection.txt'), M_base_camera, delimiter=' ',
                        fmt='%.8f')
-            logger.info(f"\n[单点法] 计算出的 M_base_camera:\n{M_base_camera}")
+            print(f"\n[单点法] 计算出的 M_base_camera:\n{M_base_camera}")
             verify_transformation(M_base_camera, points_in_camera, points_in_base)
         else:
             logger.error(f"文件 {cam_file_single} 存在，但数据点数量与目标点数量不一致，无法进行计算。")
@@ -729,16 +760,39 @@ def verify_calibration_by_realsense_camera(data_save_dir=None, move_robot=False)
     measurement_results = []
 
     # ========== 初始化相机 ==========
-    camera = RealSenseCamera(device_id=246422072474)
+    print('正在连接相机...')
+    camera = RealSenseCamera()
     camera.connect()
     print(f"相机连接成功!")
 
+    # ========== 初始化夹爪 ==========
+    if move_robot:
+        print('正在连接夹爪...')
+        gripper = GripperControllerWrapper("EC:23:06:00:D9:FB")
+        if not gripper.connect():
+            print(f"夹爪连接失败")
+            return
+        print(f"夹爪连接成功!")
+
     # ========== 初始化机械臂 ==========
     robot = DensorRobot()
-    default_grasp_pose = [140, 0, 230.0, -167, 2, 81, 5]
+    # default_grasp_pose = [140, 0, 230.0, -167, 2, 81, 5]
+    # home postion
+    default_grasp_pose = [140, 0, 230.0, -163, -1, 83, 5]
+    # 松开夹爪的位姿
+    open_grasp_pose = [140, -250, 230.0, -163, -1, 83, 5]
+    # y+ pose
+    y_plus_pose = [-164, 7, 84, 5]
+    # y- pose
+    y_minus_pose = [-163, -5, 83, 5]
     if move_robot:
-        robot.connect()
+        print('正在连接机械臂...')
+        if not robot.connect():
+            logger.error("机械臂连接失败")
+            return
+        print(f"机械臂连接成功! 移动到安全点")
         robot.send_position(default_grasp_pose)
+        time.sleep(1)
 
     # ========== 鼠标回调函数 ==========
     def on_mouse(event, x, y, flags, param):
@@ -756,8 +810,8 @@ def verify_calibration_by_realsense_camera(data_save_dir=None, move_robot=False)
             # 1.从对齐的深度图获取深度值（注意坐标顺序）
             depth_value = depth[y, x]
             depth_value = depth_value[0]
-            if depth_value < 0.1 or depth_value > 0.7:  # 合理深度范围判断
-                print(f"深度值({depth_value:.3f}m)超出有效范围(0.1-0.7m)")
+            if depth_value < 0.1 or depth_value > 0.75:  # 合理深度范围判断
+                print(f"深度值({depth_value:.3f}m)超出有效范围(0.1-0.71m)")
                 return
             # 2. 将像素点投影到相机坐标系
             camera_xyz = pixel_to_camera_coordinate(x, y, depth_value, camera.K)
@@ -769,7 +823,8 @@ def verify_calibration_by_realsense_camera(data_save_dir=None, move_robot=False)
             # 5. 缩放
             center_points = np.array([220, 0, 0])
             # xyz_scale = np.array([1.11496, 0.8479, 0.9253])
-            scale_robot_base_xyz = np.array([220, 0, 0]) + (robot_base_xyz - center_points) * np.array([1.1, 0.85, 1.0])
+            scale_robot_base_xyz = center_points + (robot_base_xyz - center_points) * np.array(
+                [1.1, 0.84, 1.5])
             # 4. 显示和记录结果
             result_str = (f"像素点: ({x},{y}) → 深度: {depth_value:.3f}m → "
                           f"相机坐标: X={camera_xyz[0]:.4f}m, Y={camera_xyz[1]:.4f}m, Z={camera_xyz[2]:.4f}m → "
@@ -777,21 +832,65 @@ def verify_calibration_by_realsense_camera(data_save_dir=None, move_robot=False)
                           f"缩放坐标: X={scale_robot_base_xyz[0]:.4f}mm, Y={scale_robot_base_xyz[1]:.4f}mm, Z={scale_robot_base_xyz[2]:.4f}mm")
             print(result_str)
 
+            # scale_robot_base_xyz 四舍五入，保留两位小数点
+            scale_robot_base_xyz = np.round(scale_robot_base_xyz, 2)
+
             # 6. 移动机械臂到点击点
             if move_robot:
+                # z轴限制
+                scale_robot_base_xyz[2] = max(scale_robot_base_xyz[2], -28)
+                # scale_robot_base_xyz[2] = map_x_to_z(scale_robot_base_xyz[0])
+                # if scale_robot_base_xyz[1] < 0:
+                #     scale_robot_base_xyz[1] = scale_robot_base_xyz[1] + 10
+                print(f"优化后的坐标点: {scale_robot_base_xyz}")
+                z_up_diff = 50
                 # 先回到安全点
                 robot.send_position(default_grasp_pose)
                 time.sleep(2)
                 # 移动到点击点
-                robot_pose = robot_base_xyz * 1000
-                robot_pose = list(robot_pose)
-                robot_pose.extend(default_grasp_pose[3:])
-                # y轴偏差
-                robot_pose[1] = robot_pose[1] - 0
+                if scale_robot_base_xyz[1] < 0:
+                    robot_pose = list(scale_robot_base_xyz) + y_minus_pose
+                else:
+                    robot_pose = list(scale_robot_base_xyz) + y_plus_pose
+                print(f"目标点位姿: {robot_pose}")
                 # 停留在上方
-                robot_pose[2] = robot_pose[2] + 50
+                robot_pose[2] = robot_pose[2] + z_up_diff
+                print(f"移动到目标上方: {robot_pose}")
                 robot.send_position(robot_pose)
-                time.sleep(1)
+                # 打开夹爪
+                print("打开夹爪...")
+                gripper.open()
+                time.sleep(2)
+
+                # # 旋转角度30度
+                # robot.rotate_relative_angle(30, j_num=6)
+                # time.sleep(1)
+                # cur_pose = robot.get_current_position()
+                # print(f"当前机械臂位置: {cur_pose}")
+
+                # 移动到点击点
+                robot_pose[2] = robot_pose[2] - z_up_diff
+                print(f"移动到目标点位姿: {robot_pose}")
+                robot.send_position(robot_pose)
+                time.sleep(2)
+                # 关闭夹爪
+                print("关闭夹爪...")
+                gripper.close()
+                # 回到安全点
+                print("回到安全点...")
+                robot.send_position(default_grasp_pose)
+                time.sleep(2)
+                # 松开夹爪点
+                print("前往夹爪松开点")
+                robot.send_position(open_grasp_pose)
+                time.sleep(2)
+                # 松开夹爪
+                print("松开夹爪...")
+                gripper.open()
+                # 回到安全点
+                print("回到安全点...")
+                robot.send_position(default_grasp_pose)
+                time.sleep(2)
 
             # 记录结果
             measurement_results.append({
@@ -811,7 +910,7 @@ def verify_calibration_by_realsense_camera(data_save_dir=None, move_robot=False)
             cv2.putText(rgb, f"Z:{robot_base_xyz[2]:.3f}", (x + 10, y + 40),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
 
-    # ========== 主循环（增强版） ==========
+    # ========== 主循环==========
     try:
         print("\n操作说明:")
         print("1. 点击图像上的点获取其在机械臂基座坐标系中的坐标")
@@ -872,23 +971,23 @@ def verify_calibration_by_realsense_camera(data_save_dir=None, move_robot=False)
         # 资源清理
         cv2.destroyAllWindows()
         camera.disconnect()
-        # 自动保存结果
-        if save_verify_results and measurement_results:
-            with open(save_verify_results_file, 'w') as f:
-                for i, res in enumerate(measurement_results, 1):
-                    f.write(f"测量点 {i}:\n")
-                    f.write(f"  像素坐标: {res['pixel']}\n")
-                    f.write(f"  深度值: {res['depth']:.4f}m\n")
-                    f.write(f"  相机坐标: {res['camera_coords']}\n")
-                    f.write(f"  基座坐标: {res['base_coords']}\n")
-                    f.write(f"  深度值(未缩放): {res['depth_origin']:.4f}m\n")
-                    f.write(f"  相机坐标(未缩放): {res['camera_coords_origin']}\n")
-                    f.write(f"  基座坐标(未缩放): {res['base_coords_origin']}\n\n")
-            print(f"自动保存 {len(measurement_results)} 个测量结果到 {save_verify_results_file}")
         if move_robot:
             robot.send_position(default_grasp_pose)
-            time.sleep(2)
+            time.sleep(0.2)
             robot.close()
+        # # 自动保存结果
+        # if save_verify_results and measurement_results:
+        #     with open(save_verify_results_file, 'w') as f:
+        #         for i, res in enumerate(measurement_results, 1):
+        #             f.write(f"测量点 {i}:\n")
+        #             f.write(f"  像素坐标: {res['pixel']}\n")
+        #             f.write(f"  深度值: {res['depth']:.4f}m\n")
+        #             f.write(f"  相机坐标: {res['camera_coords']}\n")
+        #             f.write(f"  基座坐标: {res['base_coords']}\n")
+        #             f.write(f"  深度值(未缩放): {res['depth_origin']:.4f}m\n")
+        #             f.write(f"  相机坐标(未缩放): {res['camera_coords_origin']}\n")
+        #             f.write(f"  基座坐标(未缩放): {res['base_coords_origin']}\n\n")
+        #     print(f"自动保存 {len(measurement_results)} 个测量结果到 {save_verify_results_file}")
 
 
 def test_calculate_tcp_by_sphere_fitting():
@@ -938,4 +1037,4 @@ if __name__ == '__main__':
     # do_calibrate_one_step()
     # 验证
     save_dir = os.path.join(BASE_DIR, "nine_point_calibrate_data")
-    verify_calibration_by_realsense_camera(data_save_dir=save_dir)
+    verify_calibration_by_realsense_camera(data_save_dir=save_dir, move_robot=False)

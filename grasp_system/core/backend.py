@@ -3,6 +3,7 @@ import logging
 import numpy as np
 
 from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot, QTimer
+from skimage.data import camera
 
 from grasp_system.core.core_components import (CameraHandler, RobotArmController, GripperController, RobotPlanner,
                                                DetectionModel, GraspModel, CoordinateTransformer,
@@ -260,7 +261,7 @@ class SystemBackend(QObject):
             self.task_queue.pop(0)
             return
 
-        self.log_signal.emit(UILogger.success("已锁定抓取目标！"))
+        self.log_signal.emit(UILogger.success("已锁定抓取位姿！"))
 
         # 3. 抓取规划
         target_bbox = best_target_detection['bbox']
@@ -275,15 +276,19 @@ class SystemBackend(QObject):
 
         # 4. 坐标转换
         # 从 best_grasp 中提取中心点(u,v)和深度值
-        grasp_v, grasp_u = best_grasp['center']
-        depth_val = depth[grasp_v, grasp_u].flatten()
-        self.final_grasp_pose_world = self.coord_transformer.transform_pixel_to_base(grasp_u, grasp_v, depth_val)
-        # [可选] 坐标误差优化
-        self.final_grasp_pose_world = self.coord_transformer.optimize_base_pose(self.final_grasp_pose_world)
+        pixel_x, pixel_y = best_grasp['center']
+        self.log_signal.emit(UILogger.success(f"像素坐标系  坐标(x,y)：({pixel_x},{pixel_y})"))
+        depth_val = depth[pixel_y, pixel_x].flatten()
+        camera_xyz = self.coord_transformer.transform_pixel_to_camera(pixel_x, pixel_y, depth_val)
+        self.log_signal.emit(UILogger.success(f"相机坐标系 坐标：{camera_xyz}"))
+        self.final_grasp_pose_world = self.coord_transformer.transform_pixel_to_base(pixel_y, pixel_x, depth_val)
         # 存储当前检测到的目标角度
         self.final_grasp_pose_angle = best_grasp['angle']
+        # [可选] 坐标误差优化
+        self.final_grasp_pose_world = self.coord_transformer.optimize_and_convert2robot_pose(
+            self.final_grasp_pose_world)
         self.log_signal.emit(UILogger.success(
-            f"机械臂3D坐标转换完成 坐标：{self.final_grasp_pose_world} 角度：{self.final_grasp_pose_angle}"))
+            f"机械臂坐标系 坐标：{self.final_grasp_pose_world} 角度：{self.final_grasp_pose_angle}"))
 
         # 5. 等待执行
         self._is_paused_for_execution = True
@@ -354,7 +359,8 @@ class SystemBackend(QObject):
         self.log_signal.emit(UILogger.system("开始执行抓取..."))
 
         success = self.planner.execute_grasp_sequence(
-            self.final_grasp_pose_world,
+            robot_pose=self.final_grasp_pose_world,
+            angle=self.final_grasp_pose_angle,
             log_callback=lambda msg: self.log_signal.emit(UILogger.info(msg.replace("[信息] ", "")))
         )
 
@@ -410,6 +416,7 @@ class SystemBackend(QObject):
         ok = self.arm.connect()
         self.device_connection_signal.emit("arm", ok)
         self.log_signal.emit(UILogger.success("机械臂连接成功") if ok else UILogger.error("机械臂连接失败"))
+        self.arm.go_home()
 
     @pyqtSlot()
     def disconnect_arm(self):

@@ -11,7 +11,8 @@ paths:
   open_vocab_model: "D:/PycharmProjects/robotic-grasping/yolo/pretrained_models/yoloe-11s-seg-pf.pt"
 
   # 抓取姿态估计模型 (例如, 改进GR-ConvNet的GOA-NET)
-  grasp_model: "D:/PycharmProjects/robotic-grasping/logs/20250918_0853_training_cornell_224_goanet_upconv+unet/best_model_epoch_30_iou_0.9492.pth"
+#  grasp_model: "D:/PycharmProjects/robotic-grasping/logs/20250918_0853_training_cornell_224_goanet_upconv+unet/best_model_epoch_30_iou_0.9492.pth"
+  grasp_model: "D:/PycharmProjects/robotic-grasping/trained-models/cornell-randsplit-rgbd-grconvnet3-drop1-ch32/epoch_19_iou_0.98"
 
   # 指令解析器的词典文件
   vocab: "./config/vocab.yaml"
@@ -31,9 +32,9 @@ hardware:
     # Densor机械臂的端口号
     port: 5002
     # home pose
-    home_pose: [ 140, 0, 230.0, -167, 2, 81, 5 ]
+    home_pose: [140, 0, 330.0, -163, -1, 83, 5]
     # 抓取物体后需要将物体放置的目标位姿
-    place_target_pose: [ 140, 0, 230.0, -167, 2, 81, 5 ]
+    place_target_pose: [140, -250, 230.0, -163, -1, 83, 5]
   gripper:
     # 蓝牙夹爪的MAC地址
     mac_address: "EC:23:06:00:D9:FB"

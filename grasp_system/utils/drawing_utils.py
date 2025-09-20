@@ -6,7 +6,7 @@
 import cv2
 import numpy as np
 from PyQt5.QtCore import QPointF, Qt, QRectF
-from PyQt5.QtGui import QPainter, QColor, QPen, QFont, QPolygonF, QImage, QPixmap
+from PyQt5.QtGui import QPainter, QColor, QPen, QFont, QPolygonF, QImage, QPixmap, QBrush
 
 
 class DrawingUtils:
@@ -82,7 +82,9 @@ class DrawingUtils:
         """
         for grasp in grasps:
             points_xy = grasp.get('points')  # (x, y) 顺序
-            quality = grasp.get('quality', 0.0)
+            quality = grasp.get('quality', 0.0)  # 抓取置信度
+            angle = grasp.get('angle', 0)  # 抓取角度
+            center = grasp.get('center', [])  # 中心点坐标 (x, y) 顺序
             if not points_xy or len(points_xy) != 4:
                 continue
 
@@ -90,20 +92,54 @@ class DrawingUtils:
             q_points = [QPointF(p[0], p[1]) for p in points_xy]
             polygon = QPolygonF(q_points)
 
+            # 绘制矩形框
             painter.setBrush(Qt.NoBrush)
             painter.setPen(DrawingUtils.GRASP_PEN)
             painter.drawPolygon(polygon)
 
-            center_x = sum(p.x() for p in q_points) / 4
-            center_y = sum(p.y() for p in q_points) / 4
+            # 绘制中心点（红色小点）
+            if center and len(center) == 2:
+                # 保存当前画笔设置
+                current_pen = painter.pen()
+                current_brush = painter.brush()
 
-            quality_text = f"{quality:.2f}"
-            painter.setFont(DrawingUtils.SCORE_FONT)
+                # 设置红色画笔和画刷
+                painter.setPen(QPen(Qt.red, 1))
+                painter.setBrush(QBrush(Qt.red))
+
+                # 绘制小圆作为中心点（半径2像素）
+                center_point = QPointF(center[0], center[1])
+                painter.drawEllipse(center_point, 2, 2)
+
+                # 恢复原始画笔设置
+                painter.setPen(current_pen)
+                painter.setBrush(current_brush)
+
+            # 计算矩形的中心和底部位置
+            center_x = sum(p.x() for p in q_points) / 4
+            # 找到矩形的底部y坐标（最大y值）
+            bottom_y = max(p.y() for p in q_points)
+
+            # 准备要显示的文本
+            quality_text = f"q={quality:.2f} angle={angle:.2f}"
+
+            # 设置字体，确保中文正常显示
+            font = DrawingUtils.SCORE_FONT
+            font.setFamily("SimHei")  # 使用黑体显示中文
+            painter.setFont(font)
             painter.setPen(DrawingUtils.TEXT_PEN)
 
+            # 计算文本尺寸
             text_rect = painter.fontMetrics().boundingRect(quality_text)
-            text_rect.moveCenter(QPointF(center_x, center_y).toPoint())
-            painter.drawText(text_rect, Qt.AlignCenter, quality_text)
+
+            # 将文本放在矩形正下方，中心对齐
+            # 文本顶部与矩形底部保持一定距离（3像素）
+            text_x = center_x - text_rect.width() / 2
+            text_y = bottom_y + 3  # 3像素的间距
+            text_rect.moveTo(int(text_x), int(text_y))
+
+            # 绘制文本
+            painter.drawText(text_rect, Qt.AlignLeft, quality_text)
 
 
 def format_image_for_display(img: np.ndarray | None) -> QPixmap | None:

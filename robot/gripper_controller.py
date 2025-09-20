@@ -4,6 +4,7 @@
 # @Description:
 import asyncio
 import logging
+import os
 import time
 from bleak import BleakClient, BleakScanner
 from typing import Optional
@@ -49,7 +50,7 @@ class BluetoothGripperController:
             await self._discover_characteristics()
 
             self._is_connected = True
-            logger.info(f"成功连接到设备 {self.mac_address}")
+            logger.info(f"成功连接到夹爪设备 {self.mac_address}")
             return True
 
         except Exception as e:
@@ -64,19 +65,22 @@ class BluetoothGripperController:
             raise ConnectionError(f"无法连接到设备 {self.mac_address}")
 
     async def _discover_characteristics(self):
-        if not self._client:
+        if not self._client or not self._client.is_connected:
             return
 
-        for service in self._client.services:
-            for char in service.characteristics:
-                prop = char.properties
-                if "write" in prop:
-                    self._write_char_uuid = char.uuid
-                if "notify" in prop:
-                    self._notify_char_uuid = char.uuid
+        try:
+            for service in self._client.services:
+                for char in service.characteristics:
+                    prop = char.properties
+                    if "write" in prop:
+                        self._write_char_uuid = char.uuid
+                    if "notify" in prop:
+                        self._notify_char_uuid = char.uuid
 
-        if not self._write_char_uuid:
-            logger.warning("未找到可写的特征UUID")
+            if not self._write_char_uuid:
+                logger.warning("未找到可写的特征UUID")
+        except Exception as e:
+            logger.error(f"发现特征时出错: {e}")
 
     async def _send_command(self, command: str) -> bool:
         if not await self._ensure_connection():
@@ -134,16 +138,22 @@ class BluetoothGripperController:
         )
 
     async def disconnect(self) -> None:
-        if not self._client:
+        if not self._client or not self._client.is_connected:
+            self._is_connected = False
             return
 
         try:
+            # 停止通知前检查连接状态
             if self._notify_char_uuid and hasattr(self._client, 'stop_notify'):
                 try:
-                    await self._client.stop_notify(self._notify_char_uuid)
+                    if self._client.is_connected:
+                        await self._client.stop_notify(self._notify_char_uuid)
                 except Exception as e:
-                    logger.error(f"停止通知时出错: {str(e)}")
+                    # 忽略"Not connected"错误，这表示连接已经断开
+                    if "Not connected" not in str(e):
+                        logger.error(f"停止通知时出错: {str(e)}")
 
+            # 断开连接
             if self._client.is_connected:
                 await self._client.disconnect()
                 logger.info(f"已断开与设备 {self.mac_address} 的连接")
@@ -154,11 +164,21 @@ class BluetoothGripperController:
             self._is_connected = False
 
     def __del__(self):
-        if self._loop.is_running():
-            self._loop.create_task(self.disconnect())
-        else:
-            self._loop.run_until_complete(self.disconnect())
-        self._loop.close()
+        try:
+            if self._loop.is_running():
+                # 创建一个新任务来安全地断开连接
+                asyncio.run_coroutine_threadsafe(self.disconnect(), self._loop)
+            else:
+                self._loop.run_until_complete(self.disconnect())
+        except Exception as e:
+            logger.error(f"在析构函数中出错: {e}")
+        finally:
+            try:
+                # 确保事件循环被正确关闭
+                if not self._loop.is_closed():
+                    self._loop.close()
+            except Exception as e:
+                logger.error(f"关闭事件循环时出错: {e}")
 
 
 class GripperControllerWrapper:
@@ -192,7 +212,16 @@ class GripperControllerWrapper:
 
     def _run_async(self, coro):
         try:
-            return self._loop.run_until_complete(coro)
+            # 如果事件循环未运行，则运行它
+            if not self._loop.is_running():
+                return self._loop.run_until_complete(coro)
+            # 如果事件循环正在运行，则创建一个任务
+            else:
+                future = asyncio.run_coroutine_threadsafe(coro, self._loop)
+                return future.result(timeout=10)  # 设置10秒超时
+        except asyncio.TimeoutError:
+            logger.error("操作超时")
+            return False
         except Exception as e:
             logger.error(f"执行操作时出错: {e}")
             return False
@@ -205,10 +234,29 @@ class GripperControllerWrapper:
 if __name__ == "__main__":
     MAC_ADDRESS = "EC:23:06:00:D9:FB"
 
+    # # 创建事件循环策略以避免Windows上的问题
+    # if os.name == 'nt':
+    #     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+        
     gripper = GripperControllerWrapper(MAC_ADDRESS)
 
     try:
-        gripper.connect()  # 显式连接，失败会抛出异常
+        # 尝试连接，最多尝试3次
+        connected = False
+        for i in range(3):
+            try:
+                gripper.connect()
+                connected = True
+                break
+            except ConnectionError as e:
+                logger.warning(f"连接尝试 {i+1} 失败: {e}")
+                if i < 2:  # 如果不是最后一次尝试，等待2秒再试
+                    time.sleep(2)
+        
+        if not connected:
+            logger.error("无法连接到夹爪设备")
+            exit(1)
+            
         gripper.open()
         time.sleep(2)
         gripper.close()
@@ -216,8 +264,12 @@ if __name__ == "__main__":
         # gripper.reset()
         # time.sleep(2)
         print("gripper closed")
-        gripper.disconnect()
     except ConnectionError as e:
         logger.error(f"连接异常: {e}")
+    except Exception as e:
+        logger.error(f"发生错误: {e}")
     finally:
-        gripper.disconnect()
+        try:
+            gripper.disconnect()
+        except Exception as e:
+            logger.error(f"断开连接时出错: {e}")

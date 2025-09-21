@@ -375,6 +375,8 @@ class SystemBackend(QObject):
         )
 
         self.log_signal.emit(UILogger.success("抓取完成") if success else UILogger.error("抓取失败！"))
+        if not success:
+            self.arm.go_home()
 
         # 任务完成，从队列中移除
         if self.task_queue: self.task_queue.pop(0)

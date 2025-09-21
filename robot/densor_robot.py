@@ -1,9 +1,11 @@
-import random
+import logging
 import socket
 import threading
 import time
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 class DensorRobot:
@@ -32,7 +34,7 @@ class DensorRobot:
             # 通过检查socket文件描述符判断连接状态
             return self.tcp_client is not None and self.tcp_client.fileno() != -1
         except Exception as e:
-            print(f"检查连接状态时出错: {e}")
+            logger.error(f"检查连接状态时出错: {e}")
             return False
 
     def connect(self) -> bool:
@@ -44,7 +46,7 @@ class DensorRobot:
             self.recv_thread.daemon = True  # 设置线程为守护线程
             self.recv_thread.start()  # 启动接收消息线程
         except Exception as e:
-            print(f"[robot] Connect failed: {e}")
+            logger.error(f"[robot] Connect failed: {e}")
             return False
         return True
 
@@ -62,7 +64,7 @@ class DensorRobot:
         if len(cmd) > 0:
             if not cmd.endswith('\r'):  # 如果不是以\r结尾
                 cmd += '\r'  # 拼接\r
-            print('[robot] Sending message: ' + cmd)
+            logger.debug('[robot] Sending message: ' + cmd)
             self.tcp_client.sendall(cmd.encode('utf-8'))
 
     def send_position(self, command):
@@ -119,32 +121,55 @@ class DensorRobot:
             try:
                 data = self.tcp_client.recv(1024)  # 接收消息
                 msg = data.decode('utf-8')
-                print("[robot] Receive message:", msg)  # 打印接收到的消息
+                logger.debug("[robot] Receive message:", msg)  # 打印接收到的消息
                 if msg.startswith(self.static_current_position_prefix):
                     # 去掉CP#以及开头可能存在的空格
                     msg = msg.replace("CP#", "").lstrip()
                     # 将字符串分割成列表，然后转换为float32
                     self.current_position = [float(num) for num in msg.split()]
             except Exception as e:  # 当socket连接出错时结束循环
-                print("[robot] Socket error:", str(e))
+                logger.error("[robot] Socket error:", str(e))
                 break
 
 
-if __name__ == "__main__":
-    # 机器人作为server端
-    robot_ip = "192.168.1.11"
-    robot_port = 5002
-    robot = DensorRobot(host=robot_ip, port=robot_port)  # 传入机器人的IP地址和端口号
+def test_go_to_positions():
+    robot = DensorRobot()
+    robot.connect()
+    home_pose = [140, 0, 330.0, -163, -1, 83, 5]
+    robot.send_position(home_pose)
+    time.sleep(2)
 
-    # TOOL1 抓取初始化位置
-    grap_init_position = [239.8948, 7.6883, 331.1265, -162.5392, 3.0513, 80.475, 5.0]
-    # TOOL1 标定板初始化位置
-    cal_init_position = [300.8917, -18.7299, 270.838, -144.9799, -69.0624, -36.25, 9.0]
+    logger.info("测试所有点")
+    # 读取txt所有位姿点
+    poses_txt = r'D:\PycharmProjects\robotic-grasping\calibrate\robot_tcp_pose.txt'
+    robot_poses = np.loadtxt(poses_txt, delimiter=' ')
+    for pose in robot_poses:
+        robot.send_position(pose)
+        time.sleep(2)
+        home_pose = [140, 0, 330.0, -163, -1, 83, 5]
+        robot.send_position(home_pose)
+        time.sleep(2)
+    robot.close()
+    logger.info("done")
+
+
+if __name__ == "__main__":
+    test_go_to_positions()
+
+    # # 机器人作为server端
+    # robot_ip = "192.168.1.11"
+    # robot_port = 5002
+    # robot = DensorRobot(host=robot_ip, port=robot_port)  # 传入机器人的IP地址和端口号
+    #
+    # # TOOL1 抓取初始化位置
+    # grap_init_position = [239.8948, 7.6883, 331.1265, -162.5392, 3.0513, 80.475, 5.0]
+    # # TOOL1 标定板初始化位置
+    # cal_init_position = [300.8917, -18.7299, 270.838, -144.9799, -69.0624, -36.25, 9.0]
 
     # home_position = [130.0, 0.0, 420.0, -167.69, 0.12, 82.23, 5]
     # time.sleep(2)
     # 打印当前位置
-    print(robot.get_current_position())
+    # logger.info(robot.get_current_position())
     # # 回到默认位置
     # robot.send_position(home_position)
     # time.sleep(3)
@@ -173,6 +198,6 @@ if __name__ == "__main__":
     #     robot.send_position(position)  # 发送指令
     #     time.sleep(3)
     #     current_pos = robot.get_current_position()
-    #     print("当前位置：", current_pos)
+    #     logger.info("当前位置：", current_pos)
     #     i = i + 1
-    robot.close()  # 关闭连接
+    # robot.close()  # 关闭连接

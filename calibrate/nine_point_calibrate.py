@@ -741,6 +741,119 @@ def do_calibrate_one_step():
     return save_dir
 
 
+def do_calibrate_by_end_to_end(data_save_dir=None, redo=False):
+    """
+    通过RealSense相机验证手眼标定结果，支持用户点击图像获取3D坐标
+    优化点：增加错误处理、可视化标记、深度平滑、结果保存和用户提示
+    """
+    # robot pose
+    robot_pose_txt = os.path.join(data_save_dir, "robot_tcp_pose.txt")
+    if not os.path.exists(robot_pose_txt):
+        logger.error(f"文件 {robot_pose_txt} 不存在，无法进行手眼标定。")
+        return
+    camera_point_txt = os.path.join(data_save_dir, "end2end_camera_points.txt")
+
+    robot_poses = np.loadtxt(robot_pose_txt, delimiter=' ')
+    logger.info(f"读取到 {len(robot_poses)} 个机械臂位姿")
+
+    # ========== 初始化相机 ==========
+    print('正在连接相机...')
+    camera = RealSenseCamera()
+    camera.connect()
+    print(f"相机连接成功!")
+    print(f"相机内参:\n{camera.K}")
+
+    # 存储像素坐标
+    pixel_points = []
+    # 存储相机坐标
+    camera_points = []
+    if os.path.exists(camera_point_txt):
+        camera_points = np.loadtxt(camera_point_txt, delimiter=' ')
+        logger.info(f"读取到 {len(camera_points)} 个相机坐标")
+    else:
+        logger.warning(f"文件 {camera_point_txt} 不存在，将开始手动获取相机坐标。")
+        camera_points = []
+
+    if redo or len(camera_points) == 0:
+        # ========== 鼠标回调函数 ==========
+        def on_mouse(event, x, y, flags, param):
+            if event == cv2.EVENT_LBUTTONDOWN:
+                # 获取参数
+                rgb = param['rgb']
+                depth = param['aligned_depth']
+                height, width = rgb.shape[:2]
+                # 检查点击位置是否在图像范围内
+                if not (0 <= x < width and 0 <= y < height):
+                    print("点击位置超出图像范围")
+                    return
+                pixel_points.append([x, y])
+                # 1.从对齐的深度图获取深度值（注意坐标顺序）
+                depth_value = depth[y, x]
+                depth_value = depth_value[0]
+                if depth_value < 0.1 or depth_value > 0.75:  # 合理深度范围判断
+                    print(f"深度值({depth_value:.3f}m)超出有效范围(0.1-0.71m)")
+                    return
+                # 2. 将像素点投影到相机坐标系
+                camera_xyz = pixel_to_camera_coordinate(x, y, depth_value, camera.K)
+                camera_xyz = camera_xyz.flatten()
+                camera_points.append(camera_xyz)
+                print(
+                    f"点击位置: ({x},{y}) → 深度: {depth_value:.3f}m → 相机坐标: X={camera_xyz[0]:.4f}m, Y={camera_xyz[1]:.4f}m, Z={camera_xyz[2]:.4f}m")
+
+        # ========== 主循环==========
+        try:
+            print("\n操作说明:")
+            print("1. 点击图像上的点获取其在相机坐标系中的坐标值")
+            print("2. 按 'r' 清除所有测量结果")
+            print("3. 按 'ESC' 退出程序")
+            while True:
+                # 获取图像
+                images = camera.get_image_bundle()
+                if not images or 'rgb' not in images or 'aligned_depth' not in images:
+                    print("获取图像失败，重试...")
+                    continue
+                # 转换色彩空间以适应OpenCV显示
+                rgb = cv2.cvtColor(images['rgb'], cv2.COLOR_RGB2BGR)
+                depth = images['aligned_depth']
+                # 显示操作提示
+                cv2.putText(rgb, "ESC:exit | r:clear | h:home", (10, 30),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
+                # 显示窗口并绑定鼠标事件
+                cv2.imshow('VerifyCalibration', rgb)
+                cv2.setMouseCallback('VerifyCalibration', on_mouse, param={'rgb': rgb, 'aligned_depth': depth})
+                # 处理键盘事件
+                key = cv2.waitKey(1) & 0xFF
+                if key == 27:  # ESC 退出
+                    print("程序退出")
+                    break
+                elif key == ord('s'):  # 保存结果
+                    pixel_points.clear()
+                    camera_points.clear()
+                    print("已清除所有测量结果")
+        except Exception as e:
+            print(f"程序运行出错: {str(e)}")
+        finally:
+            # 资源清理
+            cv2.destroyAllWindows()
+            camera.disconnect()
+
+    if len(robot_poses) != len(camera_points):
+        logger.error(f"机械臂位姿数量({len(robot_poses)})与相机坐标数量({len(camera_points)})不一致，无法进行手眼标定。")
+        return
+
+    # ========== 计算手眼标定矩阵 ==========
+    # robot_poses 每个元素都只提取前3个元素
+    robot_poses = robot_poses[:, :3] / 1000
+    # 计算刚性变换
+    camera_points = np.asarray(camera_points)
+    M_base_camera = rigid_transform(camera_points, robot_poses)
+    print(f"\n[end2end法] camera_points:\n{camera_points}")
+    print(f"\n[end2end法] 计算出的 M_base_camera:\n{M_base_camera}")
+    np.savetxt(os.path.join(save_dir, 'M_base_camera_by_end2end.txt'), M_base_camera, delimiter=' ', fmt='%.8f')
+    np.savetxt(os.path.join(save_dir, 'end2end_camera_points.txt'), camera_points, delimiter=' ', fmt='%.8f')
+    verify_transformation(M_base_camera, camera_points, robot_poses)
+
+
 def verify_calibration_by_realsense_camera(data_save_dir=None, move_robot=False):
     """
     通过RealSense相机验证手眼标定结果，支持用户点击图像获取3D坐标
@@ -750,12 +863,10 @@ def verify_calibration_by_realsense_camera(data_save_dir=None, move_robot=False)
         logger.error(f"数据保存文件夹未指定")
         return
     # ========== 读取标定结果 ==========
-    txt_name = 'M_base_camera_by_projection.txt'
+    txt_name = 'M_base_camera_by_end2end.txt'
+    # txt_name = 'M_base_camera_by_projection.txt'
     M_base_camera = np.loadtxt(os.path.join(data_save_dir, txt_name), delimiter=' ')
     print(f"手眼标定矩阵:\n{M_base_camera}")
-
-    save_verify_results = True  # 是否保存测量结果
-    save_verify_results_file = os.path.join(data_save_dir, "calibration_verification_results.txt")
 
     # 存储测量结果
     measurement_results = []
@@ -779,14 +890,15 @@ def verify_calibration_by_realsense_camera(data_save_dir=None, move_robot=False)
     # ========== 初始化机械臂 ==========
     robot = DensorRobot()
     # default_grasp_pose = [140, 0, 230.0, -167, 2, 81, 5]
-    # home postion
-    default_grasp_pose = [140, 0, 230.0, -163, -1, 83, 5]
+    # home position
+    default_grasp_pose = [140, 0, 330.0, -163, -1, 83, 5]
     # 松开夹爪的位姿
     open_grasp_pose = [140, -250, 230.0, -163, -1, 83, 5]
     # y+ pose
-    y_plus_pose = [-164, 7, 84, 5]
+    # y_plus_pose = [-164, 7, 84, 5]
+    y_plus_pose = [-168, 5, 84, 5]
     # y- pose
-    y_minus_pose = [-163, -5, 83, 5]
+    y_minus_pose = [-164, -4, 83, 5]
     if move_robot:
         print('正在连接机械臂...')
         if not robot.connect():
@@ -825,8 +937,7 @@ def verify_calibration_by_realsense_camera(data_save_dir=None, move_robot=False)
             # 5. 缩放
             center_points = np.array([220, 0, 0])
             # xyz_scale = np.array([1.11496, 0.8479, 0.9253])
-            scale_robot_base_xyz = center_points + (robot_base_xyz - center_points) * np.array(
-                [1.1, 0.84, 1.5])
+            scale_robot_base_xyz = center_points + (robot_base_xyz - center_points) * np.array([1.0, 0.8, 1.1])
             # 4. 显示和记录结果
             result_str = (f"像素点: ({x},{y}) → 深度: {depth_value:.3f}m → "
                           f"相机坐标: X={camera_xyz[0]:.4f}m, Y={camera_xyz[1]:.4f}m, Z={camera_xyz[2]:.4f}m → "
@@ -836,11 +947,25 @@ def verify_calibration_by_realsense_camera(data_save_dir=None, move_robot=False)
 
             # scale_robot_base_xyz 四舍五入，保留两位小数点
             scale_robot_base_xyz = np.round(scale_robot_base_xyz, 2)
-
+            # scale_robot_base_xyz = np.round(robot_base_xyz, 2)
             # 6. 移动机械臂到点击点
             if move_robot:
                 # z轴限制
-                scale_robot_base_xyz[2] = max(scale_robot_base_xyz[2], -28)
+                if scale_robot_base_xyz[2] < -28:
+                    scale_robot_base_xyz[2] = scale_robot_base_xyz[2] - 1
+                if scale_robot_base_xyz[2] < -26:
+                    scale_robot_base_xyz[2] = scale_robot_base_xyz[2] - 2
+                elif scale_robot_base_xyz[2] < -25:
+                    scale_robot_base_xyz[2] = scale_robot_base_xyz[2] - 3
+                elif scale_robot_base_xyz[2] < -24:
+                    scale_robot_base_xyz[2] = scale_robot_base_xyz[2] - 2
+                elif scale_robot_base_xyz[2] < -20:
+                    scale_robot_base_xyz[2] = scale_robot_base_xyz[2] - 5
+                elif scale_robot_base_xyz[2] < 0:
+                    scale_robot_base_xyz[2] = scale_robot_base_xyz[2] - 10
+                else:
+                    scale_robot_base_xyz[2] = scale_robot_base_xyz[2] - 2
+                scale_robot_base_xyz[2] = max(scale_robot_base_xyz[2], -30)
                 # scale_robot_base_xyz[2] = map_x_to_z(scale_robot_base_xyz[0])
                 # if scale_robot_base_xyz[1] < 0:
                 #     scale_robot_base_xyz[1] = scale_robot_base_xyz[1] + 10
@@ -878,6 +1003,7 @@ def verify_calibration_by_realsense_camera(data_save_dir=None, move_robot=False)
                 # 关闭夹爪
                 print("关闭夹爪...")
                 gripper.close()
+                time.sleep(2)
                 # 回到安全点
                 print("回到安全点...")
                 robot.send_position(default_grasp_pose)
@@ -916,7 +1042,6 @@ def verify_calibration_by_realsense_camera(data_save_dir=None, move_robot=False)
     try:
         print("\n操作说明:")
         print("1. 点击图像上的点获取其在机械臂基座坐标系中的坐标")
-        print("2. 按 's' 保存当前测量结果到文件")
         print("3. 按 'r' 清除所有测量结果")
         print("4. 按 'ESC' 退出程序")
 
@@ -945,18 +1070,6 @@ def verify_calibration_by_realsense_camera(data_save_dir=None, move_robot=False)
             if key == 27:  # ESC 退出
                 print("程序退出")
                 break
-            elif key == ord('s') and save_verify_results:  # 保存结果
-                with open(save_verify_results_file, 'w', encoding='utf-8') as f:
-                    for i, res in enumerate(measurement_results, 1):
-                        f.write(f"测量点 {i}:\n")
-                        f.write(f"  像素坐标: {res['pixel']}\n")
-                        f.write(f"  深度值: {res['depth']:.4f}m\n")
-                        f.write(f"  相机坐标: {res['camera_coords']}\n")
-                        f.write(f"  基座坐标: {res['base_coords']}\n")
-                        f.write(f"  深度值(未缩放): {res['depth_origin']:.4f}m\n")
-                        f.write(f"  相机坐标(未缩放): {res['camera_coords_origin']}\n")
-                        f.write(f"  基座坐标(未缩放): {res['base_coords_origin']}\n\n")
-                print(f"已保存 {len(measurement_results)} 个测量结果到 {save_verify_results_file}")
             elif key == ord('r'):  # 清除结果
                 measurement_results.clear()
                 print("已清除所有测量结果")
@@ -977,19 +1090,6 @@ def verify_calibration_by_realsense_camera(data_save_dir=None, move_robot=False)
             robot.send_position(default_grasp_pose)
             time.sleep(0.2)
             robot.close()
-        # # 自动保存结果
-        # if save_verify_results and measurement_results:
-        #     with open(save_verify_results_file, 'w') as f:
-        #         for i, res in enumerate(measurement_results, 1):
-        #             f.write(f"测量点 {i}:\n")
-        #             f.write(f"  像素坐标: {res['pixel']}\n")
-        #             f.write(f"  深度值: {res['depth']:.4f}m\n")
-        #             f.write(f"  相机坐标: {res['camera_coords']}\n")
-        #             f.write(f"  基座坐标: {res['base_coords']}\n")
-        #             f.write(f"  深度值(未缩放): {res['depth_origin']:.4f}m\n")
-        #             f.write(f"  相机坐标(未缩放): {res['camera_coords_origin']}\n")
-        #             f.write(f"  基座坐标(未缩放): {res['base_coords_origin']}\n\n")
-        #     print(f"自动保存 {len(measurement_results)} 个测量结果到 {save_verify_results_file}")
 
 
 def test_calculate_tcp_by_sphere_fitting():
@@ -1034,9 +1134,10 @@ def test_calculate_tcp_by_sphere_fitting():
 #                                  主函数
 # ==============================================================================
 if __name__ == '__main__':
-    # test_calculate_tcp_by_sphere_fitting()
+    save_dir = os.path.join(BASE_DIR, "nine_point_calibrate_data")
     # 标定
     # do_calibrate_one_step()
+    # 端到端标定
+    # do_calibrate_by_end_to_end(save_dir)
     # 验证
-    save_dir = os.path.join(BASE_DIR, "nine_point_calibrate_data")
-    verify_calibration_by_realsense_camera(data_save_dir=save_dir, move_robot=False)
+    verify_calibration_by_realsense_camera(data_save_dir=save_dir, move_robot=True)

@@ -91,17 +91,25 @@ class GripperController:
         self.gripper.disconnect()
         self.connected = False
 
-    def open(self):
+    def open(self) -> bool:
+        if not self.connected:
+            logger.error("[Gripper] Gripper not connected.")
+            return False
         logger.info("[Gripper] Gripper opening...")
         self.gripper.open()
-        time.sleep(1.5)
+        time.sleep(1)
         logger.info("[Gripper] Gripper opened.")
+        return True
 
-    def close(self):
+    def close(self) -> bool:
+        if not self.connected:
+            logger.error("[Gripper] Gripper not connected.")
+            return False
         logger.info("[Gripper] Gripper closing...")
         self.gripper.close()
-        time.sleep(1.5)
+        time.sleep(1)
         logger.info("[Gripper] Gripper closed.")
+        return True
 
 
 class RobotArmController:
@@ -164,7 +172,7 @@ class RobotArmController:
         """
         logger.info(f"[RobotArm] Rotate joint {j_num} by {angle} degrees")
         self.robot.rotate_relative_angle(angle, j_num)
-        time.sleep(1)
+        time.sleep(1.5)
         return True
 
     def get_current_position(self) -> list:
@@ -205,17 +213,20 @@ class RobotPlanner:
         log_callback("[信息] 1/7: 移动到抓取点上方...")
         if not self.arm.move_to(robot_pose):
             log_callback(f"[错误] 1/7: 移动到抓取点上方失败")
+            logger.error(f"移动到抓取点上方失败")
             return False
 
         # 2. 张开夹爪
         log_callback("[信息] 2/7: 张开夹爪...")
         if not self.gripper.open():
             log_callback(f"[错误] 2/7: 张开夹爪失败")
+            logger.error(f"张开夹爪失败")
             return False
 
         # 判断是否需要旋转
         if abs(angle) > 0.1:
             log_callback("[信息] : 旋转角度...")
+            logger.info(f"处理旋转角度...")
             # 弧度转度，并且变换方向
             self.arm.rotate_relative_angle(CoordinateTransformer.radian_to_degree(-angle), j_num=6)
             cur_robot_pose = self.arm.get_current_position()
@@ -227,33 +238,39 @@ class RobotPlanner:
         log_callback("[信息] 3/7: 下降至目标...")
         if not self.arm.move_to(robot_pose):
             log_callback(f"[错误] 3/7: 下降至目标失败")
+            logger.error(f"下降至目标失败")
             return False
 
         # 4. 闭合夹爪
         log_callback("[信息] 4/7: 闭合夹爪...")
         if not self.gripper.close():
             log_callback(f"[错误] 4/7: 闭合夹爪失败")
+            logger.error(f"闭合夹爪失败")
             return False
 
         # 5. 抬升
         log_callback("[信息] 5/7: 抬升物体...")
         if not self.arm.move_to(self.arm.home_pose):
             log_callback(f"[错误] 5/7: 抬升物体失败")
+            logger.error(f"抬升物体失败")
             return False
         if not self.arm.move_to(self.arm.place_target_pose):
             log_callback(f"[错误] 5/7: 移动到放置位置失败")
+            logger.error(f"移动到放置位置失败")
             return False
 
         # 6. 张开夹爪
         log_callback("[信息] 6/7: 张开夹爪...")
         if not self.gripper.open():
             log_callback(f"[错误] 6/7: 张开夹爪失败")
+            logger.error(f"张开夹爪失败")
             return False
 
         # 7. 回到home pose
         log_callback("[信息] 7/7: 回到home pose...")
         if not self.arm.go_home():
             log_callback(f"[错误] 7/7: 回到home pose失败")
+            logger.error(f"回到home pose失败")
             return False
 
         return True
@@ -429,8 +446,7 @@ class CoordinateTransformer:
             TypeError: 当输入不是数值类型时抛出
         """
         # 检查输入是否为数值类型
-        if not isinstance(rad, (int, float)):
-            raise TypeError("输入必须是整数或浮点数")
+        rad = float(rad)
 
         # 将弧度转换到-pi/2到pi/2范围
         # 使用公式: φ = θ - 2π × round(θ / π - 0.5)

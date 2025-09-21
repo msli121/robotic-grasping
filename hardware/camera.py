@@ -81,8 +81,6 @@ class RealSenseCamera:
         # 转换为米
         depth_image *= self.scale
         if fill_depth:
-            # 将0值（无效深度）转换为NaN
-            depth_image[depth_image <= 0] = np.nan
             if fill_method == 'opencv':
                 depth_image = self._fill_depth_opencv(depth_image)
             elif fill_method == 'bilateral':
@@ -129,18 +127,20 @@ class RealSenseCamera:
     def set_dist(self, dist):
         self.dist = dist
 
-    def _fill_depth_opencv(self, depth_map: np.ndarray) -> np.ndarray:
+    def _fill_depth_opencv(self, depth_image: np.ndarray) -> np.ndarray:
         """
         使用OpenCV的Telea算法填充深度图中的缺失值
 
         参数:
-            depth_map: 包含NaN值的深度图(单通道)
+            depth_image: 包含NaN值的深度图(单通道)
 
         返回:
             填充后的深度图
         """
         start_time = time.time()
-
+        depth_map = depth_image.copy()
+        # 将0值（无效深度）转换为NaN
+        depth_map[depth_map <= 0] = np.nan
         # 1. 创建缺失区域掩码 (缺失区域为255，有效区域为0)
         nan_mask = np.isnan(depth_map).astype(np.uint8) * 255
 
@@ -151,7 +151,8 @@ class RealSenseCamera:
         # 3. 保存原始深度图的统计信息，用于后续归一化
         valid_depth = depth_map[~np.isnan(depth_map)]
         if len(valid_depth) == 0:
-            raise ValueError("输入深度图中没有有效深度值")
+            # raise ValueError("输入深度图中没有有效深度值")
+            return depth_image
 
         min_val, max_val = valid_depth.min(), valid_depth.max()
 
@@ -192,7 +193,8 @@ class RealSenseCamera:
         """
         start_time = time.time()
         filled = depth_map.copy()
-
+        # 将0值（无效深度）转换为NaN
+        filled[filled <= 0] = np.nan
         for _ in range(iterations):
             # 找到NaN区域
             nan_mask = np.isnan(filled)
@@ -211,20 +213,23 @@ class RealSenseCamera:
         logger.debug(f"双边滤波填充耗时: {time.time() - start_time:.4f}秒")
         return filled
 
-    def _fill_depth_weighted(self, depth_map: np.ndarray, radius: int = 3) -> np.ndarray:
+    def _fill_depth_weighted(self, depth_image: np.ndarray, radius: int = 3) -> np.ndarray:
         """
         使用邻近有效像素的加权平均，填充结果更平滑
 
-        :param depth_map: 包含NaN的深度图
+        :param depth_image: 包含NaN的深度图
         :param radius: 搜索邻域半径
         :return: 填充后的深度图
         """
         start_time = time.time()
+        depth_map = depth_image.copy()
+        # 将0值（无效深度）转换为NaN
+        depth_map[depth_map <= 0] = np.nan
         filled = depth_map.copy()
         nan_mask = np.isnan(filled)
 
         if not np.any(nan_mask):
-            return filled
+            return depth_image
 
         # 获取NaN点坐标
         nan_coords = np.argwhere(nan_mask)
@@ -249,15 +254,18 @@ class RealSenseCamera:
         logger.debug(f"加权平均填充耗时: {time.time() - start_time:.4f}秒")
         return filled
 
-    def _fill_depth_median(self, depth_map: np.ndarray, kernel_size: int = 5) -> np.ndarray:
+    def _fill_depth_median(self, depth_image: np.ndarray, kernel_size: int = 5) -> np.ndarray:
         """
         使用中值滤波快速填充深度图缺失值，适合实时应用场景
 
-        :param depth_map: 包含NaN的深度图
+        :param depth_image: 包含NaN的深度图
         :param kernel_size: 中值滤波核大小
         :return: 填充后的深度图
         """
         start_time = time.time()
+        depth_map = depth_image.copy()
+        # 将0值（无效深度）转换为NaN
+        depth_map[depth_map <= 0] = np.nan
         # 将NaN替换为0以便进行中值滤波
         depth_with_zero = np.nan_to_num(depth_map, nan=0)
 

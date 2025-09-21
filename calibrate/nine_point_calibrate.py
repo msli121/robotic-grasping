@@ -752,6 +752,7 @@ def verify_calibration_by_realsense_camera(data_save_dir=None, move_robot=False)
     # ========== 读取标定结果 ==========
     txt_name = 'M_base_camera_by_projection.txt'
     M_base_camera = np.loadtxt(os.path.join(data_save_dir, txt_name), delimiter=' ')
+    print(f"手眼标定矩阵:\n{M_base_camera}")
 
     save_verify_results = True  # 是否保存测量结果
     save_verify_results_file = os.path.join(data_save_dir, "calibration_verification_results.txt")
@@ -764,6 +765,7 @@ def verify_calibration_by_realsense_camera(data_save_dir=None, move_robot=False)
     camera = RealSenseCamera()
     camera.connect()
     print(f"相机连接成功!")
+    print(f"相机内参:\n{camera.K}")
 
     # ========== 初始化夹爪 ==========
     if move_robot:

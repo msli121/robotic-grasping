@@ -96,7 +96,6 @@ class ControlPanel(QFrame):
         mode_hbox.addWidget(self.open_vocab_radio)
         mode_hbox.addWidget(self.closed_set_radio)
         layout.addLayout(mode_hbox)
-        # --- 结束改动 ---
 
         layout.addWidget(QLabel("目标选择策略:"))
         self.strategy_combo = QComboBox()
@@ -105,7 +104,7 @@ class ControlPanel(QFrame):
 
         layout.addWidget(QLabel("文本指令:"))
         self.instruction_text = QTextEdit()
-        self.instruction_text.setPlaceholderText("在此输入指令...")
+        self.instruction_text.setPlaceholderText("在此输入指令，例如：抓取红色打火机...")
         layout.addWidget(self.instruction_text)
 
         # 创建一个水平布局来放置两个按钮
@@ -230,6 +229,9 @@ class VisionLogPanel(QFrame):
         self.main_video_label.setAlignment(Qt.AlignCenter)
         self.log_box = QTextEdit()
         self.log_box.setReadOnly(True)
+        # TextSelectableByMouse: 允许用鼠标选择文本
+        # TextSelectableByKeyboard: 允许用键盘 (e.g., Ctrl+A) 选择文本
+        self.log_box.setTextInteractionFlags(Qt.TextSelectableByMouse | Qt.TextSelectableByKeyboard)
         layout.addWidget(self.main_video_label, 3)
         layout.addWidget(self.log_box, 1)
 
@@ -245,6 +247,7 @@ class AnalysisPanel(QFrame):
         def create_display(name):
             label = QLabel(f"<b>{name}</b>")
             label.setAlignment(Qt.AlignCenter)
+            label.setTextInteractionFlags(Qt.TextSelectableByMouse)
             display = QLabel()
             display.setAlignment(Qt.AlignCenter)
             display.setFrameShape(QFrame.Box)

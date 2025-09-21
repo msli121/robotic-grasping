@@ -355,7 +355,7 @@ class CoordinateTransformer:
             return False
         else:
             self.camera_matrix = np.loadtxt(self.camera_matrix_path, delimiter=' ')
-            logger.info(f"Camera matrix loaded: {self.camera_matrix}")
+            logger.info(f"相机内参:\n{self.camera_matrix}")
         if not self.M_base_camera_path:
             self.M_base_camera_path = r'D:\PycharmProjects\robotic-grasping\calibrate\calibrate_result\M_base_camera.txt'
         if not os.path.exists(self.M_base_camera_path):
@@ -363,7 +363,7 @@ class CoordinateTransformer:
             return False
         else:
             self.M_base_camera = np.loadtxt(self.M_base_camera_path, delimiter=' ')
-            logger.info(f"M_base_camera loaded: {self.M_base_camera}")
+            logger.info(f"手眼变换矩阵:\n{self.M_base_camera}")
         return True
 
     def transform_pixel_to_camera(self, u, v, depth_value) -> np.ndarray:
@@ -387,24 +387,6 @@ class CoordinateTransformer:
         camera_xyz = np.array([Xc, Yc, Zc])
         return camera_xyz.flatten()
 
-    def transform_pixel_to_base(self, u, v, depth_value) -> np.ndarray:
-        """"
-        像素坐标 -> 机器人世界坐标
-        :param u: 像素坐标u
-        :param v: 像素坐标v
-        :param depth_value: 深度值 m
-        :return: 机器人世界坐标 [x, y, z]
-        """
-        if self.M_base_camera is None:
-            raise Exception("M_base_camera not loaded.")
-        # 1. 像素坐标 -> 相机坐标 (需要相机内参)
-        camera_coordinate = self.transform_pixel_to_camera(u, v, depth_value)
-        # 2. 相机坐标 -> 机器人世界坐标 (需要手眼标定矩阵)
-        camera_coord_homog = np.append(camera_coordinate, [1]).reshape(4, 1)  # 转换为齐次坐标
-        robot_coord = np.dot(self.M_base_camera, camera_coord_homog)
-        robot_base_xyz = robot_coord[:3].flatten()  # 移除齐次坐标
-        return robot_base_xyz
-
     def transform_camera_to_base(self, x_c, y_c, z_c) -> np.ndarray:
         """
         相机坐标 -> 机器人世界坐标
@@ -421,6 +403,19 @@ class CoordinateTransformer:
         robot_coord = np.dot(self.M_base_camera, camera_coord_homog)
         robot_base_xyz = robot_coord[:3].flatten()  # 移除齐次坐标
         return robot_base_xyz
+
+    def transform_pixel_to_base(self, u, v, depth_value) -> np.ndarray:
+        """"
+        像素坐标 -> 机器人世界坐标
+        :param u: 像素坐标u
+        :param v: 像素坐标v
+        :param depth_value: 深度值 m
+        :return: 机器人世界坐标 [x, y, z]
+        """
+        # 1. 像素坐标 -> 相机坐标 (需要相机内参)
+        camera_xyz = self.transform_pixel_to_camera(u, v, depth_value)
+        # 2. 相机坐标 -> 机器人世界坐标 (需要手眼标定矩阵)
+        return self.transform_camera_to_base(camera_xyz[0], camera_xyz[1], camera_xyz[2])
 
     @staticmethod
     def radian_to_degree(rad):
@@ -463,11 +458,12 @@ class CoordinateTransformer:
             print("Warning: base_xyz values are too large, may be in meters instead of millimeters.")
             raise Exception("base_xyz values are too large, may be in meters instead of millimeters.")
         # 1. 将机械臂基坐标转换为mm
+        base_xyz = np.asarray(base_xyz)
         base_xyz_mm = base_xyz * 1000
         # 机械臂活动中心点
         center_point = np.array([220, 0, 0])  # 根据实际情况修改
         # xyz轴的缩放误差
-        xyz_scale = np.array([1.1, 0.84, 1.55])  # 根据实际情况修改
+        xyz_scale = np.array([1.1, 0.84, 1.5])  # 根据实际情况修改
         # 应用缩放误差
         optimized_xyz_mm = center_point + (base_xyz_mm - center_point) * xyz_scale
         # z轴限制
@@ -491,89 +487,169 @@ class PostProcessor:
     - 根据查询计划中的约束，从多个检测结果中筛选出唯一的目标。
     """
 
-    def select_best_target(self, detections: list, constraints: list, rgb_image: np.ndarray,
-                           depth_image: np = None) -> dict | None:
+    # --- ADDED: 定义颜色HSV范围 ---
+    COLOR_HSV_RANGES = {
+        'red': [([0, 120, 70], [10, 255, 255]), ([170, 120, 70], [180, 255, 255])],
+        'green': [([35, 100, 50], [85, 255, 255])],
+        'blue': [([100, 150, 50], [140, 255, 255])],
+        'yellow': [([20, 100, 100], [30, 255, 255])],
+        'white': [([0, 0, 200], [180, 30, 255])],
+        'black': [([0, 0, 0], [180, 255, 50])]
+    }
+
+    def __init__(self, coord_transformer: CoordinateTransformer):
         """
-        应用约束，筛选最佳目标
-        :param detections: 检测结果列表，每个元素是一个字典，包含 'bbox', 'score', 'class_id' 等。
-        :param constraints: 查询计划中的约束列表，每个元素是一个字典，包含 'type' 和 'value'。
-        :param rgb_image: 输入的 RGB 图像，用于颜色筛选。
-        :param depth_image: 可选的深度图，用于位置筛选。
-        :return: 最佳目标的检测字典，或 None。
+        初始化后处理器。
+        :param coord_transformer: 一个已初始化的CoordinateTransformer实例，用于3D计算。
+        """
+        self.coord_transformer = coord_transformer
+
+    def select_best_target(self, detections: list, constraints: list, rgb_image: np.ndarray,
+                           depth_image: np.ndarray = None) -> dict | None:
+        """
+        应用多个约束，通过多轮筛选的方式决策出最佳目标
+        :param detections: 检测到的目标列表
+        :param constraints: 查询计划中的约束列表
+        :param rgb_image: RGB图像
+        :param depth_image: 深度图像
         """
         candidates = detections.copy()
+        if not candidates:
+            return None
 
-        # --- 颜色筛选 ---
-        # 颜色约束
-        color_constraint = next((c for c in constraints if c['type'] == 'color'), None)
-        if color_constraint:
-            color_to_find = color_constraint['value']
+        # --- 步骤 1: 应用所有过滤型约束 ---
+        filter_constraints = [c for c in constraints if c['type'] == 'color']
+        for constraint in filter_constraints:
+            color_to_find = constraint['value']
             candidates = [d for d in candidates if self._is_color_dominant(d['bbox'], rgb_image, color_to_find)]
+            if not candidates:
+                return None
 
-        if not candidates: return None
+        # --- 步骤 2: 定义排序型约束的优先级和处理函数 ---
+        # 优先级从上到下递减。
+        SORTING_PRIORITY = [
+            'nearest', 'farthest',  # 距离约束最优先
+            'largest', 'smallest',  # 其次是尺寸约束
+            'topmost', 'bottommost',  # 最后是2D位置约束
+            'rightmost', 'leftmost'
+        ]
 
-        # --- 应用排序型约束 (尺寸、位置) 排序找到最优 ---
-        # 尺寸约束
-        size_constraint = next((c for c in constraints if c['type'] == 'size'), None)
-        if size_constraint:
-            is_largest = size_constraint['value'] == 'largest'
-            candidates.sort(key=lambda d: self._get_bbox_area(d['bbox']), reverse=is_largest)
-            return candidates[0]  # 尺寸约束具有最高优先级，直接返回结果
+        # 排序函数字典保持不变
+        sorters = {
+            'largest': lambda d: self._get_bbox_area(d['bbox']),
+            'smallest': lambda d: -self._get_bbox_area(d['bbox']),
+            'leftmost': lambda d: -(d['bbox'][0] + d['bbox'][2]) / 2,
+            'rightmost': lambda d: (d['bbox'][0] + d['bbox'][2]) / 2,
+            'topmost': lambda d: -(d['bbox'][1] + d['bbox'][3]) / 2,
+            'bottommost': lambda d: (d['bbox'][1] + d['bbox'][3]) / 2,
+            'nearest': lambda d: -self._get_3d_distance(d['bbox'], depth_image) if depth_image is not None else -np.inf,
+            'farthest': lambda d: self._get_3d_distance(d['bbox'], depth_image) if depth_image is not None else -np.inf
+        }
 
-        # 位置约束
-        pos_constraint = next((c for c in constraints if c['type'] == 'position'), None)
-        if pos_constraint:
-            if pos_constraint['value'] == 'leftmost':
-                # 按 bbox 中心 x 坐标排序
-                candidates.sort(key=lambda d: (d['bbox'][0] + d['bbox'][2]) / 2)
-                return candidates[0]
-            elif pos_constraint['value'] == 'rightmost':
-                # 按 bbox 中心 x 坐标排序
-                candidates.sort(key=lambda d: (d['bbox'][0] + d['bbox'][2]) / 2, reverse=True)
-                return candidates[0]
-            elif pos_constraint['value'] == 'topmost':
-                # 按 bbox 中心 y 坐标排序
-                candidates.sort(key=lambda d: (d['bbox'][1] + d['bbox'][3]) / 2)
-                return candidates[0]
-            elif pos_constraint['value'] == 'bottommost':
-                # 按 bbox 中心 y 坐标排序
-                candidates.sort(key=lambda d: (d['bbox'][1] + d['bbox'][3]) / 2, reverse=True)
-                return candidates[0]
-            elif pos_constraint['value'] == 'middle':
-                # 按 bbox 中心 x 坐标排序
-                candidates.sort(key=lambda d: (d['bbox'][0] + d['bbox'][2]) / 2)
+        # 提取指令中出现的所有排序约束
+        active_constraints = [c['value'] for c in constraints if c['value'] in sorters]
+
+        # --- 步骤 3: 按照优先级顺序，进行多轮筛选 ---
+        for constraint_name in SORTING_PRIORITY:
+            if constraint_name in active_constraints:
+                # 如果当前优先级的约束在指令中出现了
+                if not candidates:
+                    break  # 没有候选者直接停止
+
+                # 获取对应的排序函数
+                sorter = sorters[constraint_name]
+
+                # 找到当前候选者中的最大值
+                # 使用一个小的容差(tolerance)来处理浮点数精度问题，认为相近的值是“并列第一”
+                max_val = max(sorter(c) for c in candidates)
+                tolerance = 1e-5
+
+                # 选出所有接近最大值的候选者，作为下一轮的输入
+                candidates = [c for c in candidates if sorter(c) >= max_val - tolerance]
+
+                # 如果筛选后只剩一个，提前结束
+                if len(candidates) == 1:
+                    return candidates[0]
+
+        # --- 步骤 4: 处理特殊约束和最终决策 ---
+        if 'middle' in [c['value'] for c in constraints]:
+            # middle 是一个特例，它需要先按x坐标排序
+            candidates.sort(key=lambda d: (d['bbox'][0] + d['bbox'][2]) / 2)
+            if candidates:
                 return candidates[len(candidates) // 2]
-            elif pos_constraint['value'] == 'nearest':
-                # 按3D距离排序
-                candidates.sort(key=lambda d: self._get_3d_distance(d['bbox'], depth_image))
-                return candidates[0]
+            else:
+                return None
 
-        # 如果没有排序型约束，则默认返回置信度最高的
-        candidates.sort(key=lambda d: d['score'], reverse=True)
-        return candidates[0]
+        # 如果经过所有排序约束后仍有多个候选者（例如，两个物体完全一样大且并排）
+        # 则使用默认的置信度规则来选出最终的一个
+        if candidates:
+            candidates.sort(key=lambda d: d.get('score', 0), reverse=True)
+            return candidates[0]
+        else:
+            # 如果在某一轮筛选后，候选者列表变空了
+            return None
 
     # --- 辅助函数 ---
-    def _get_bbox_area(self, bbox):
+    @staticmethod
+    def _get_bbox_area(bbox):
         x1, y1, x2, y2 = bbox
         return (x2 - x1) * (y2 - y1)
 
-    def _is_color_dominant(self, bbox, image, color_name):
-        """一个简化的颜色检查函数 (占位符)。"""
-        # TODO: 实现更鲁棒的颜色检测逻辑
-        # 例如: 裁剪ROI -> 转换到HSV空间 -> 计算颜色直方图 -> 判断主色调
-        print(f"Checking if dominant color is '{color_name}' in bbox {bbox} (Not Implemented)")
-        return True  # 暂时总是返回 True
+    def _is_color_dominant(self, bbox, image, color_name, threshold=0.15):
+        """
+        检查bbox内是否以指定颜色为主导。
+        """
+        color_name = color_name.lower()
+        if color_name not in self.COLOR_HSV_RANGES:
+            return False  # 不支持的颜色
+
+        x1, y1, x2, y2 = map(int, bbox)
+        roi = image[y1:y2, x1:x2]
+        if roi.size == 0:
+            return False
+
+        hsv_roi = cv2.cvtColor(roi, cv2.COLOR_RGB2HSV)
+
+        total_mask = np.zeros(hsv_roi.shape[:2], dtype="uint8")
+
+        # 应用该颜色的所有HSV范围
+        for (lower, upper) in self.COLOR_HSV_RANGES[color_name]:
+            mask_part = cv2.inRange(hsv_roi, np.array(lower), np.array(upper))
+            total_mask = cv2.bitwise_or(total_mask, mask_part)
+
+        # 计算颜色像素占总面积的比例
+        color_pixel_count = cv2.countNonZero(total_mask)
+        total_pixel_count = roi.shape[0] * roi.shape[1]
+
+        return (color_pixel_count / total_pixel_count) > threshold
 
     def _get_3d_distance(self, bbox, depth_map):
-        """计算 bbox 中心的3D距离 (占位符)。"""
-        # TODO: 需要相机内参才能实现
-        # 1. 计算 bbox 中心点 (u, v)
-        # 2. 从 depth_map 获取深度 Z
-        # 3. (u, v, Z) -> (Xc, Yc, Zc) (相机坐标)
-        # 4. 返回 sqrt(Xc^2 + Yc^2 + Zc^2)
-        print(f"Calculating 3D distance for bbox {bbox} (Not Implemented)")
-        # 暂时用2D面积作为替代来模拟排序
-        return -self._get_bbox_area(bbox)
+        """
+        计算bbox中心的真实3D距离。
+        """
+        if self.coord_transformer is None or self.coord_transformer.camera_matrix is None:
+            # 如果没有坐标转换器，则无法计算3D距离，返回一个极大值
+            return np.inf
+
+        x1, y1, x2, y2 = map(int, bbox)
+        u, v = (x1 + x2) // 2, (y1 + y2) // 2
+
+        # 从5x5邻域中获取鲁棒的深度值
+        patch = depth_map[max(0, v - 2):v + 3, max(0, u - 2):u + 3]
+        valid_depths = patch[patch > 0]  # 忽略无效深度
+
+        if valid_depths.size == 0:
+            return np.inf  # 如果区域内没有有效深度，则无法计算
+
+        depth_median = np.median(valid_depths)
+
+        try:
+            # 转换为相机坐标系
+            Xc, Yc, Zc = self.coord_transformer.transform_pixel_to_camera(u, v, depth_median)
+            # 计算欧几里得距离
+            return np.sqrt(Xc ** 2 + Yc ** 2 + Zc ** 2)
+        except Exception:
+            return np.inf
 
 
 class InstructionParser:
@@ -671,8 +747,7 @@ class InstructionParser:
             # 在闭集模式下，我们忽略属性，只关心核心实体
             plan["prompt_for_model"] = plan["target_entity_zh"]
             # 从英文名获取class_id
-            plan['class_id_filter'] = self.class_map_en_to_id.get(plan["target_entity_zh"])
-
+            plan['class_id_filter'] = self.class_map_zh_to_id.get(plan["target_entity_zh"])
         elif mode == 'open_vocab':
             if plan["target_entity_en"]:
                 # 场景1: 找到了已知实体 (例如 "红色的螺丝")

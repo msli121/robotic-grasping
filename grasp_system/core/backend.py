@@ -70,7 +70,7 @@ class SystemBackend(QObject):
         self.coord_transformer = CoordinateTransformer(camera_matrix_path=self.config['paths']['camera_matrix'],
                                                        M_base_camera_path=self.config['paths']['M_base_camera'])
         self.instruction_parser = InstructionParser(vocab_path=self.config['paths']['vocab'])
-        self.post_processor = PostProcessor()
+        self.post_processor = PostProcessor(self.coord_transformer)
         self.open_vocab_detector = DetectionModel(model_path=self.config['paths']['open_vocab_model'],
                                                   model_type='yoloe-pf')
         self.closed_set_detector = DetectionModel(model_path=self.config['paths']['closed_set_model'],
@@ -92,7 +92,7 @@ class SystemBackend(QObject):
             self.open_vocab_detector.load()
             self.closed_set_detector.load()
             self.coord_transformer.load()
-            self.log_signal.emit(UILogger.info("模型加载完成"))
+            self.log_signal.emit(UILogger.success("模型加载完成"))
         except Exception as e:
             self.log_signal.emit(UILogger.error(f"模型加载失败: {e}"))
             return
@@ -257,8 +257,8 @@ class SystemBackend(QObject):
         best_target_detection = self.post_processor.select_best_target(detections, plan['constraints'], rgb, depth)
 
         if not best_target_detection:
-            self.log_signal.emit(UILogger.warning("所有候选目标均不满足约束条件，任务失败"))
-            self.task_queue.pop(0)
+            self.log_signal.emit(UILogger.error("未找到物体，无法执行指令"))
+            self.task_queue.clear()
             return
 
         self.log_signal.emit(UILogger.success("已锁定抓取位姿！"))
@@ -278,15 +278,17 @@ class SystemBackend(QObject):
         # 从 best_grasp 中提取中心点(u,v)和深度值
         pixel_x, pixel_y = best_grasp['center']
         self.log_signal.emit(UILogger.success(f"像素坐标系  坐标(x,y)：({pixel_x},{pixel_y})"))
+        logger.info(f"像素坐标系  坐标(x,y)：({pixel_x},{pixel_y})")
         depth_val = depth[pixel_y, pixel_x].flatten()
         camera_xyz = self.coord_transformer.transform_pixel_to_camera(pixel_x, pixel_y, depth_val)
         self.log_signal.emit(UILogger.success(f"相机坐标系 坐标：{camera_xyz}"))
-        self.final_grasp_pose_world = self.coord_transformer.transform_pixel_to_base(pixel_y, pixel_x, depth_val)
+        logger.info(f"相机坐标系 坐标：{camera_xyz}")
+        robot_xyz = self.coord_transformer.transform_camera_to_base(camera_xyz[0], camera_xyz[1], camera_xyz[2])
+        logger.info(f"机械臂坐标系 坐标：{robot_xyz}")
         # 存储当前检测到的目标角度
         self.final_grasp_pose_angle = best_grasp['angle']
         # [可选] 坐标误差优化
-        self.final_grasp_pose_world = self.coord_transformer.optimize_and_convert2robot_pose(
-            self.final_grasp_pose_world)
+        self.final_grasp_pose_world = self.coord_transformer.optimize_and_convert2robot_pose(robot_xyz)
         self.log_signal.emit(UILogger.success(
             f"机械臂坐标系 坐标：{self.final_grasp_pose_world} 角度：{self.final_grasp_pose_angle}"))
 
@@ -301,12 +303,12 @@ class SystemBackend(QObject):
     @pyqtSlot(bool)
     def set_detection_enabled(self, enabled):
         self.is_detection_enabled = enabled
-        self.log_signal.emit(UILogger.info(f"实时目标识别已 {'开启' if enabled else '关闭'}"))
+        self.log_signal.emit(UILogger.info(f"实时目标识别已{'开启' if enabled else '关闭'}"))
 
     @pyqtSlot(bool)
     def set_grasp_enabled(self, enabled):
         self.is_grasp_enabled = enabled
-        self.log_signal.emit(UILogger.info(f"实时抓取预测已 {'开启' if enabled else '关闭'}"))
+        self.log_signal.emit(UILogger.info(f"实时抓取预测已{'开启' if enabled else '关闭'}"))
 
     @pyqtSlot(str)
     def set_mode(self, mode_text):  # e.g., "自动模式" or "指令模式"
@@ -333,15 +335,23 @@ class SystemBackend(QObject):
 
     @pyqtSlot(str)
     def process_instruction(self, text):
-        self.stop_all_tasks()
-        plan = self.instruction_parser.parse(text, self.current_mode)
-        if plan:
-            self.task_queue.append(plan)
-            self.log_signal.emit(UILogger.success(f"指令解析成功，已创建任务"))
-            # # 立即触发任务执行
-            # self.process_single_task_cycle()
+        if self.task_queue:
+            self.log_signal.emit(UILogger.warning("当前已存在任务，请先执行任务或者清空任务！"))
+            logger.info(f"当前已存在任务，请先执行任务或者清空任务！ plan: {self.task_queue[0]}")
+            return
         else:
-            self.log_signal.emit(UILogger.error(f"指令解析失败！"))
+            self.task_queue.clear()
+            self._is_paused_for_execution = False
+            self.grasp_enable_signal.emit(False)
+            plan = self.instruction_parser.parse(text, self.current_mode)
+            if plan:
+                logger.info(f"指令解析成功:\n{plan}")
+                self.task_queue.append(plan)
+                self.log_signal.emit(UILogger.success(f"指令解析成功，已创建任务"))
+                # # 立即触发任务执行
+                # self.process_single_task_cycle()
+            else:
+                self.log_signal.emit(UILogger.error(f"指令解析失败！"))
 
     @pyqtSlot()
     def execute_grasp(self):
@@ -404,6 +414,8 @@ class SystemBackend(QObject):
             cal_ok = self.coord_transformer.load()
             self.log_signal.emit(
                 UILogger.success("标定矩阵加载成功") if cal_ok else UILogger.error("标定矩阵加载失败！"))
+            self.log_signal.emit(UILogger.info(f"相机内参:\n{self.coord_transformer.camera_matrix}"))
+            self.log_signal.emit(UILogger.info(f"手眼转换矩阵:\n{self.coord_transformer.M_base_camera}"))
 
     @pyqtSlot()
     def disconnect_camera(self):

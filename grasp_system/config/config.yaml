@@ -34,7 +34,7 @@ hardware:
     # home pose
     home_pose: [140, 0, 330.0, -163, -1, 83, 5]
     # 抓取物体后需要将物体放置的目标位姿
-    place_target_pose: [140, -250, 230.0, -163, -1, 83, 5]
+    place_target_pose: [140, -300, 230.0, -163, -1, 83, 5]
   gripper:
     # 蓝牙夹爪的MAC地址
     mac_address: "EC:23:06:00:D9:FB"

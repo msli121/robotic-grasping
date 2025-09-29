@@ -1,9 +1,9 @@
 import yaml
 import logging
 import numpy as np
+import threading
 
 from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot, QTimer
-from skimage.data import camera
 
 from grasp_system.core.core_components import (CameraHandler, RobotArmController, GripperController, RobotPlanner,
                                                DetectionModel, GraspModel, CoordinateTransformer,
@@ -11,6 +11,15 @@ from grasp_system.core.core_components import (CameraHandler, RobotArmController
 from grasp_system.ui.ui_logger import UILogger
 
 logger = logging.getLogger(__name__)
+
+
+class WorkerSignals(QObject):
+    """
+    定义一个 QObject 子类，专门用于承载从工作线程发出的信号。
+    这确保了跨线程通信的类型安全和线程安全。
+    """
+    log_signal = pyqtSignal(str)  # 用于发送日志字符串
+    finished_signal = pyqtSignal(bool)  # 用于发送最终的成功/失败状态
 
 
 class SystemBackend(QObject):
@@ -348,13 +357,15 @@ class SystemBackend(QObject):
                 logger.info(f"指令解析成功:\n{plan}")
                 self.task_queue.append(plan)
                 self.log_signal.emit(UILogger.success(f"指令解析成功，已创建任务"))
-                # # 立即触发任务执行
-                # self.process_single_task_cycle()
             else:
                 self.log_signal.emit(UILogger.error(f"指令解析失败！"))
 
     @pyqtSlot()
     def execute_grasp(self):
+        """
+        启动物理抓取。
+        创建一个新的工作线程来执行阻塞的抓取，并立即返回，防止阻塞主线程画面显示
+        """
         # 前置条件校验
         arm_ready = self.arm.connected
         gripper_ready = self.gripper.connected
@@ -365,28 +376,72 @@ class SystemBackend(QObject):
             self.log_signal.emit(UILogger.error("夹爪未连接，无法执行抓取"))
             return
 
+        # 禁用UI按钮，防止重复点击
         self.grasp_enable_signal.emit(False)
         self.log_signal.emit(UILogger.system("开始执行抓取..."))
 
-        success = self.planner.execute_grasp_sequence(
-            robot_pose=self.final_grasp_pose_world,
-            angle=self.final_grasp_pose_angle,
-            log_callback=lambda msg: self.log_signal.emit(UILogger.info(msg.replace("[信息] ", "")))
-        )
+        # 1. 创建一个 WorkerSignals 实例用于本次任务的通信
+        self.grasp_worker_signals = WorkerSignals()
 
+        # 2. 将信号连接到主线程的槽函数
+        self.grasp_worker_signals.log_signal.connect(self._handle_grasp_log)
+        self.grasp_worker_signals.finished_signal.connect(self._handle_grasp_finished)
+
+        # 3. 创建并启动工作线程
+        grasp_thread = threading.Thread(
+            target=self._execute_grasp_in_thread,
+            args=(self.final_grasp_pose_world, self.final_grasp_pose_angle, self.grasp_worker_signals)
+        )
+        grasp_thread.daemon = True
+        grasp_thread.start()
+
+    def _execute_grasp_in_thread(self, robot_pose, angle, signals: WorkerSignals):
+        """
+        这个方法在独立的工作线程中执行。
+        它包含了所有阻塞的硬件操作。
+        """
+        try:
+            # 创建一个回调函数，它会通过信号将日志发送回主线程
+            log_callback = lambda msg: signals.log_signal.emit(msg)
+            # 调用原始的、阻塞的 execute_grasp_sequence 方法
+            success = self.planner.execute_grasp_sequence(
+                robot_pose=robot_pose,
+                angle=angle,
+                log_callback=log_callback
+            )
+            # 任务完成，通过信号发送最终结果
+            signals.finished_signal.emit(success)
+        except Exception as e:
+            logger.error(f"Grasp execution thread failed: {e}", exc_info=True)
+            signals.finished_signal.emit(False)
+            signals.log_signal.emit(f"机械臂抓取错误: {e}")
+
+    @pyqtSlot(str)
+    def _handle_grasp_log(self, message):
+        """
+        在主线程中安全地处理来自工作线程的日志。
+        """
+        self.log_signal.emit(UILogger.info(message.replace("[信息] ", "")))
+
+    @pyqtSlot(bool)
+    def _handle_grasp_finished(self, success):
+        """
+        在主线程中安全地处理抓取任务完成的信号
+        """
         self.log_signal.emit(UILogger.success("抓取完成") if success else UILogger.error("抓取失败！"))
         if not success:
-            self.arm.go_home()
-
-        # 任务完成，从队列中移除
-        if self.task_queue: self.task_queue.pop(0)
+            self.arm.go_home()  # 如果失败，尝试返回home
+        # 任务完成后的状态清理
+        if self.task_queue:
+            self.task_queue.pop(0)
 
         self._is_paused_for_execution = False
         self.final_grasp_pose_world = None
+        self.current_text_prompt = None
 
-        # # 自动开始下一个任务 (如果存在)
-        # if self.task_queue and not self._is_paused_for_execution:
-        #     self.process_single_task_cycle()
+        # 清理通信器，避免内存泄漏
+        self.grasp_worker_signals.deleteLater()
+        self.grasp_worker_signals = None
 
     @pyqtSlot()
     def stop_all_tasks(self):

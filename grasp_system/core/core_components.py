@@ -84,7 +84,7 @@ class GripperController:
 
     def connect(self) -> bool:
         self.connected = self.gripper.connect()
-        return self.connected
+        return bool(self.connected)
 
     def disconnect(self):
         logger.info("[Gripper] Gripper disconnected.")
@@ -152,7 +152,7 @@ class RobotArmController:
             return False
         logger.info(f"[RobotArm] Arm going to home position: {pose}")
         self.robot.send_position(pose)
-        time.sleep(1.5)
+        time.sleep(2)
         return True
 
     def move_to(self, pose) -> bool:
@@ -161,7 +161,7 @@ class RobotArmController:
             return False
         logger.info(f"[RobotArm] Move to {pose}")
         self.robot.send_position(pose)
-        time.sleep(1.5)
+        time.sleep(2)
         return True
 
     def rotate_relative_angle(self, angle: float = 0.0, j_num: int = 6):
@@ -172,7 +172,7 @@ class RobotArmController:
         """
         logger.info(f"[RobotArm] Rotate joint {j_num} by {angle} degrees")
         self.robot.rotate_relative_angle(angle, j_num)
-        time.sleep(1.5)
+        time.sleep(2)
         return True
 
     def get_current_position(self) -> list:
@@ -249,7 +249,7 @@ class RobotPlanner:
             return False
 
         # 5. 抬升
-        log_callback("[信息] 5/7: 抬升物体...")
+        log_callback("[信息] 5.1/7: 抬升物体...")
         if not self.arm.move_to(self.arm.home_pose):
             log_callback(f"[错误] 5/7: 抬升物体失败")
             logger.error(f"抬升物体失败")
@@ -479,20 +479,37 @@ class CoordinateTransformer:
         # 机械臂活动中心点
         center_point = np.array([220, 0, 0])  # 根据实际情况修改
         # xyz轴的缩放误差
-        xyz_scale = np.array([1.1, 0.84, 1.5])  # 根据实际情况修改
+        # xyz_scale = np.array([1.1, 0.84, 1.5])  # 根据实际情况修改
+        xyz_scale = np.array([1.0, 0.8, 1.1])  # 根据实际情况修改
         # 应用缩放误差
         optimized_xyz_mm = center_point + (base_xyz_mm - center_point) * xyz_scale
         # z轴限制
         optimized_xyz_mm[2] = max(optimized_xyz_mm[2], -30)
         # y+ 时抓取姿态pose
-        y_plus_pose = [-164, 7, 84, 5]
+        y_plus_pose = [-168, 5, 84, 5]
         # y- 时抓取姿态pose
-        y_minus_pose = [-163, -5, 83, 5]
+        y_minus_pose = [-164, -4, 83, 5]
         if optimized_xyz_mm[1] < 0:
             optimized_xyz_mm = np.concatenate((optimized_xyz_mm, y_minus_pose))
         else:
             optimized_xyz_mm = np.concatenate((optimized_xyz_mm, y_plus_pose))
         optimized_xyz_mm = optimized_xyz_mm.flatten()
+
+        # z 轴抓取深度
+        if optimized_xyz_mm[2] < -28:
+            optimized_xyz_mm[2] = optimized_xyz_mm[2] - 1
+        if optimized_xyz_mm[2] < -26:
+            optimized_xyz_mm[2] = optimized_xyz_mm[2] - 2
+        elif optimized_xyz_mm[2] < -25:
+            optimized_xyz_mm[2] = optimized_xyz_mm[2] - 3
+        elif optimized_xyz_mm[2] < -24:
+            optimized_xyz_mm[2] = optimized_xyz_mm[2] - 2
+        elif optimized_xyz_mm[2] < -20:
+            optimized_xyz_mm[2] = optimized_xyz_mm[2] - 5
+        elif optimized_xyz_mm[2] < 0:
+            optimized_xyz_mm[2] = optimized_xyz_mm[2] - 10
+        else:
+            optimized_xyz_mm[2] = optimized_xyz_mm[2] - 2
         logger.info(f"优化后的机械臂姿态:{optimized_xyz_mm}")
         return optimized_xyz_mm
 

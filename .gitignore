@@ -109,3 +109,6 @@ results/
 saved_data/
 
 *.pyc
+
+logs/
+/logs/20250906_1408_training_cornell_grconvnet_goa_Baseline/

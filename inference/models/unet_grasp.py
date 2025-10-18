@@ -358,53 +358,6 @@ class UNetGrasp(GraspModel):
             config_name += "_DGG"
         return config_name
 
-    def compute_loss(self, xc, yc):
-        """
-        极简损失：BCE(Logits) + 掩膜 SmoothL1（角度与宽度）
-        - 返回结构保持不变
-        - y_pos ∈ [0,1]；建议 y_cos,y_sin = cos(2θ), sin(2θ)；y_width 为像素宽度（已随几何增强同步缩放）
-        """
-        y_pos, y_cos, y_sin, y_width = yc
-        pos_logits, cos_pred, sin_pred, width_pred = self(xc)  # pos_logits 是logits
-
-        eps = 1e-6
-        M = torch.clamp(y_pos, 0.0, 1.0)  # 可抓掩膜
-
-        # ---- 1) Q/pos: BCEWithLogits + 批内自动平衡 ----
-        with torch.no_grad():
-            pos_sum = y_pos.sum()
-            neg_sum = (1.0 - y_pos).sum()
-            pos_weight = (neg_sum / (pos_sum + eps)).clamp(0.5, 10.0)
-        p_loss = torch.nn.functional.binary_cross_entropy_with_logits(pos_logits, y_pos, pos_weight=pos_weight)
-
-        # ---- 2) 角度：掩膜 SmoothL1（最简）----
-        l1_cos = torch.nn.functional.smooth_l1_loss(cos_pred, y_cos, reduction='none')
-        l1_sin = torch.nn.functional.smooth_l1_loss(sin_pred, y_sin, reduction='none')
-        cos_loss = (l1_cos * M).sum() / (M.sum() + eps)
-        sin_loss = (l1_sin * M).sum() / (M.sum() + eps)
-
-        # ---- 3) 宽度：掩膜 SmoothL1（像素域，最简）----
-        width_loss_map = torch.nn.functional.smooth_l1_loss(width_pred, y_width, reduction='none')
-        width_loss = (width_loss_map * M).sum() / (M.sum() + eps)
-
-        total = p_loss + cos_loss + sin_loss + width_loss
-
-        return {
-            'loss': total,
-            'losses': {
-                'p_loss': p_loss,
-                'cos_loss': cos_loss,
-                'sin_loss': sin_loss,
-                'width_loss': width_loss
-            },
-            'pred': {
-                'pos': torch.sigmoid(pos_logits),  # 概率图 [0,1]
-                'cos': cos_pred,
-                'sin': sin_pred,
-                'width': width_pred
-            }
-        }
-
 
 # ---------------------- Quick Self Test ----------------------
 if __name__ == '__main__':

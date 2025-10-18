@@ -394,7 +394,7 @@ def run():
     logging.basicConfig(
         level=logging.INFO,
         filename=os.path.join(save_folder, 'log.log'),
-        format='[%(asctime)s] {%(pathname)s:%(lineno)d} %(levelname)s - %(message)s',
+        format='[%(asctime)s] %(levelname)s - %(message)s - {%(pathname)s:%(lineno)d}',
         datefmt='%H:%M:%S'
     )
     console = logging.StreamHandler()

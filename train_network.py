@@ -1,9 +1,12 @@
+# -*- coding: utf-8 -*-
 import argparse
 import datetime
 import json
 import logging
 import os
 import sys
+import random
+import math
 
 import cv2
 import numpy as np
@@ -11,8 +14,9 @@ import tensorboardX
 import torch
 import torch.optim as optim
 import torch.utils.data
-from torchsummary import summary
+from torch.cuda.amp import GradScaler, autocast
 from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.utils.data import Subset, RandomSampler, SequentialSampler, DataLoader
 from tqdm import tqdm
 
 from hardware.device import get_device
@@ -23,6 +27,7 @@ from utils.dataset_processing import evaluation
 from utils.visualisation.gridshow import gridshow
 
 
+# ------------------------ Args ------------------------
 def parse_args():
     parser = argparse.ArgumentParser(description='Train network')
 
@@ -55,7 +60,7 @@ def parse_args():
                         help='Shuffle the dataset')
     parser.add_argument('--ds-rotate', type=float, default=0.0,
                         help='Shift the start point of the dataset to use a different test/train split')
-    parser.add_argument('--num-workers', type=int, default=8,
+    parser.add_argument('--num-workers', type=int, default=4,
                         help='Dataset workers')
 
     # Training
@@ -80,239 +85,288 @@ def parse_args():
     parser.add_argument('--random-seed', type=int, default=123,
                         help='Random seed for numpy')
 
-    # 优化后的网络grconvnet_mas的参数配置
-    parser.add_argument('--upconv', type=int, default=0,
-                        help='Use upconv for training (1/0)')
-    parser.add_argument('--unet', type=int, default=0,
-                        help='Use UNet for training (1/0)')
-    parser.add_argument('--fpn', type=int, default=0,
-                        help='Use FPN for training (1/0)')
-    parser.add_argument('--goa', type=int, default=0,
-                        help='Use GOA for training (1/0)')
-    parser.add_argument('--cbam', type=int, default=0,
-                        help='Use CBAM for training (1/0)')
-    parser.add_argument('--aff', type=int, default=0,
-                        help='Use AFF for training (1/0)')
-    parser.add_argument('--spdconv', type=int, default=0,
-                        help='Use SPDConv for training (1/0)')
-    parser.add_argument('--spd-scale', type=int, default=2,
-                        help='SPDConv scale for training (2/3/4)')
+    # 改进网络开关（保持兼容）
+    parser.add_argument('--upconv', type=int, default=0)
+    parser.add_argument('--unet', type=int, default=0)
+    parser.add_argument('--fpn', type=int, default=0)
+    parser.add_argument('--goa', type=int, default=0)
+    parser.add_argument('--cbam', type=int, default=0)
+    parser.add_argument('--aff', type=int, default=0)
+    parser.add_argument('--spdconv', type=int, default=0)
+    parser.add_argument('--spd-scale', type=int, default=2)
 
-    # ============================================================================
-    # --- 新增的训练策略参数 ---
-    # ============================================================================
+    # 新增训练策略参数（保持你原有默认）
     parser.add_argument('--lr', type=float, default=1e-3,
                         help='Initial learning rate')
     parser.add_argument('--weight-decay', type=float, default=1e-4,
                         help='Weight decay for AdamW optimizer')
     parser.add_argument('--lr-patience', type=int, default=5,
-                        help='Patience for learning rate scheduler (epochs)')
+                        help='Patience for ReduceLROnPlateau (epochs)')
     parser.add_argument('--early-stop-patience', type=int, default=30,
                         help='Patience for early stopping (epochs)')
-    # ============================================================================
 
-    args = parser.parse_args()
-    return args
+    return parser.parse_args()
 
 
+# ------------------------ Utils ------------------------
+def set_global_seed(seed: int):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+
+def seed_worker(worker_id):
+    """
+    让每个 dataloader worker 拥有不同的随机种子，避免小数据集上增强完全同步。
+    """
+    worker_seed = torch.initial_seed() % 2 ** 32
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
+
+
+def save_model_arch(net, save_folder):
+    try:
+        arch_path = os.path.join(save_folder, 'arch.txt')
+        with open(arch_path, 'w') as f:
+            f.write(str(net))
+            f.write('\n\n')
+            total_params = sum(p.numel() for p in net.parameters())
+            trainable_params = sum(p.numel() for p in net.parameters() if p.requires_grad)
+            f.write(f"Total Parameters: {total_params:,}\n")
+            f.write(f"Trainable Parameters: {trainable_params:,}\n")
+        logging.info(f"Model architecture saved to {arch_path}")
+        logging.info(f"Total Parameters: {total_params:,}")
+        logging.info(f"Trainable Parameters: {trainable_params:,}")
+    except Exception as e:
+        logging.warning(f"Failed to save model architecture: {e}")
+
+
+# ------------------------ Data Loaders ------------------------
+def make_dataloaders(args, save_folder):
+    """
+    为 train/val 分别实例化数据集；小数据集使用带 replacement 的 RandomSampler；
+    固化索引划分到磁盘，保证复现实验。
+    """
+    Dataset = get_dataset(args.dataset)
+
+    # 训练集（开启随机增强）
+    train_dataset = Dataset(
+        args.dataset_path,
+        output_size=args.input_size,
+        ds_rotate=args.ds_rotate,
+        random_rotate=True,
+        random_zoom=True,
+        include_depth=args.use_depth,
+        include_rgb=args.use_rgb
+    )
+    # 验证集（关闭随机增强）
+    val_dataset = Dataset(
+        args.dataset_path,
+        output_size=args.input_size,
+        ds_rotate=args.ds_rotate,
+        random_rotate=False,
+        random_zoom=False,
+        include_depth=args.use_depth,
+        include_rgb=args.use_rgb
+    )
+
+    # 固化划分：读写 split_indices.json
+    split_file = os.path.join(save_folder, 'split_indices.json')
+    if os.path.exists(split_file):
+        with open(split_file, 'r') as f:
+            split_indices = json.load(f)
+        train_indices = split_indices['train']
+        val_indices = split_indices['val']
+        logging.info(f'Loaded existing split indices from {split_file}')
+    else:
+        total_len = train_dataset.length if hasattr(train_dataset, 'length') else len(train_dataset)
+        indices = list(range(total_len))
+        if args.ds_shuffle:
+            np.random.seed(args.random_seed)
+            np.random.shuffle(indices)
+        split = int(np.floor(args.split * total_len))
+        train_indices, val_indices = indices[:split], indices[split:]
+        with open(split_file, 'w') as f:
+            json.dump({'train': train_indices, 'val': val_indices}, f, indent=2)
+        logging.info(f'Saved split indices to {split_file}')
+
+    train_subset = Subset(train_dataset, train_indices)
+    val_subset = Subset(val_dataset, val_indices)
+
+    # 训练采样器：replacement 精准控制 epoch 大小
+    samples_per_epoch = args.batches_per_epoch * args.batch_size
+    train_sampler = RandomSampler(train_subset, replacement=True, num_samples=samples_per_epoch)
+
+    # 验证采样器：顺序确保稳定
+    val_sampler = SequentialSampler(val_subset)
+
+    pin_memory = True
+    persistent_workers = (args.num_workers > 0)
+    generator = torch.Generator()
+    generator.manual_seed(args.random_seed)
+
+    train_loader = DataLoader(
+        train_subset,
+        batch_size=args.batch_size,
+        sampler=train_sampler,
+        num_workers=args.num_workers,
+        pin_memory=pin_memory,
+        persistent_workers=persistent_workers,
+        prefetch_factor=2 if args.num_workers > 0 else None,
+        drop_last=True,
+        worker_init_fn=seed_worker,
+        generator=generator
+    )
+    val_loader = DataLoader(
+        val_subset,
+        batch_size=1,
+        sampler=val_sampler,
+        num_workers=max(0, min(2, args.num_workers)),
+        pin_memory=pin_memory,
+        persistent_workers=False,
+        drop_last=False
+    )
+
+    total_len = train_dataset.length if hasattr(train_dataset, 'length') else len(train_dataset)
+    logging.info(f"Dataset size (total): {total_len}")
+    logging.info(f"Train/Val split: {len(train_indices)}/{len(val_indices)}")
+    logging.info(
+        f"Train samples per epoch (effective): {samples_per_epoch} = {args.batches_per_epoch} x {args.batch_size}")
+
+    return train_loader, val_loader
+
+
+# ------------------------ Validation ------------------------
+@torch.no_grad()
 def validate(net, device, val_data, iou_threshold):
     """
     Run validation.
-    :param net: Network
-    :param device: Torch device
-    :param val_data: Validation Dataset
-    :param iou_threshold: IoU threshold
-    :return: Successes, Failures and Losses
     """
     net.eval()
-
-    results = {
-        'correct': 0,
-        'failed': 0,
-        'loss': 0,
-        'losses': {
-
-        }
-    }
-
+    results = {'correct': 0, 'failed': 0, 'loss': 0, 'losses': {}}
     ld = len(val_data)
 
-    with torch.no_grad():
-        for x, y, didx, rot, zoom_factor in val_data:
-            xc = x.to(device)
-            yc = [yy.to(device) for yy in y]
-            lossd = net.compute_loss(xc, yc)
+    # --- 解开 Subset，拿到底层真正的数据集 ---
+    base_ds = val_data.dataset
+    while isinstance(base_ds, Subset):
+        base_ds = base_ds.dataset
 
-            loss = lossd['loss']
+    for x, y, didx, rot, zoom_factor in val_data:
+        xc = x.to(device, non_blocking=True)
+        yc = [yy.to(device, non_blocking=True) for yy in y]
+        lossd = net.compute_loss(xc, yc)
+        loss = lossd['loss']
 
-            results['loss'] += loss.item() / ld
-            for ln, l in lossd['losses'].items():
-                if ln not in results['losses']:
-                    results['losses'][ln] = 0
-                results['losses'][ln] += l.item() / ld
+        results['loss'] += loss.item() / ld
+        for ln, l in lossd['losses'].items():
+            results['losses'].setdefault(ln, 0.0)
+            results['losses'][ln] += float(l.item()) / ld
 
-            q_out, ang_out, w_out = post_process_output(lossd['pred']['pos'], lossd['pred']['cos'],
-                                                        lossd['pred']['sin'], lossd['pred']['width'])
+        q_out, ang_out, w_out = post_process_output(
+            lossd['pred']['pos'], lossd['pred']['cos'],
+            lossd['pred']['sin'], lossd['pred']['width']
+        )
 
-            s = evaluation.calculate_iou_match(q_out,
-                                               ang_out,
-                                               val_data.dataset.get_gtbb(didx, rot, zoom_factor),
-                                               no_grasps=1,
-                                               grasp_width=w_out,
-                                               threshold=iou_threshold
-                                               )
+        # 用底层数据集的 get_gtbb（注意：didx 就是底层数据集的样本索引）
+        gt = base_ds.get_gtbb(didx, rot, zoom_factor)
 
-            if s:
-                results['correct'] += 1
-            else:
-                results['failed'] += 1
+        s = evaluation.calculate_iou_match(q_out, ang_out, gt,
+                                           no_grasps=1, grasp_width=w_out, threshold=iou_threshold
+                                           )
+
+        if s:
+            results['correct'] += 1
+        else:
+            results['failed'] += 1
 
     return results
 
 
+# ------------------------ Training ------------------------
 def train(epoch, net, device, train_data, optimizer, batches_per_epoch, vis=False):
     """
     Run one training epoch
-    :param epoch: Current epoch
-    :param net: Network
-    :param device: Torch device
-    :param train_data: Training Dataset
-    :param optimizer: Optimizer
-    :param batches_per_epoch:  Data batches to train on
-    :param vis:  Visualise training progress
-    :return:  Average Losses for Epoch
     """
-    results = {
-        'loss': 0,
-        'losses': {
-        }
-    }
-
+    results = {'loss': 0.0, 'losses': {}}
     net.train()
 
-    # 使用tqdm来迭代训练数据，显示训练进度
-    batch_idx = 0
+    scaler = GradScaler(enabled=(device.type == 'cuda'))
+    steps = 0
+
     with tqdm(total=batches_per_epoch, desc=f"Epoch {epoch + 1:02d}", leave=True) as pbar:
-        while batch_idx < batches_per_epoch:
-            for x, y, _, _, _ in train_data:
-                # 控制每个epoch的批次数
-                if batch_idx > batches_per_epoch:
-                    break
-                batch_idx += 1
+        for x, y, _, _, _ in train_data:
+            if steps >= batches_per_epoch:
+                break
+            steps += 1
 
-                xc = x.to(device)
-                yc = [yy.to(device) for yy in y]
+            xc = x.to(device, non_blocking=True)
+            yc = [yy.to(device, non_blocking=True) for yy in y]
+
+            optimizer.zero_grad(set_to_none=True)
+            with autocast(enabled=(device.type == 'cuda')):
                 lossd = net.compute_loss(xc, yc)
-
                 loss = lossd['loss']
 
-                results['loss'] += loss.item()
-                for ln, l in lossd['losses'].items():
-                    results['losses'].setdefault(ln, 0)
-                    results['losses'][ln] += l.item()
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
 
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
+            results['loss'] += loss.item()
+            for ln, l in lossd['losses'].items():
+                results['losses'].setdefault(ln, 0.0)
+                results['losses'][ln] += float(l.item())
 
-                # 更新tqdm进度条的后缀信息，显示实时loss
-                pbar.set_postfix(loss=f"{loss.item():.4f}")
-                pbar.update(1)
+            pbar.set_postfix(loss=f"{loss.item():.4f}")
+            pbar.update(1)
 
-                # Display the images
-                if vis:
-                    imgs = []
-                    n_img = min(4, x.shape[0])
-                    for idx in range(n_img):
-                        imgs.extend([x[idx,].numpy().squeeze()] + [yi[idx,].numpy().squeeze() for yi in y] + [
-                            x[idx,].numpy().squeeze()] + [pc[idx,].detach().cpu().numpy().squeeze() for pc in
-                                                          lossd['pred'].values()])
-                    gridshow('Display', imgs,
-                             [(xc.min().item(), xc.max().item()), (0.0, 1.0), (0.0, 1.0), (-1.0, 1.0),
-                              (0.0, 1.0)] * 2 * n_img,
-                             [cv2.COLORMAP_BONE] * 10 * n_img, 10)
-                    cv2.waitKey(2)
+            if vis:
+                imgs = []
+                n_img = min(4, x.shape[0])
+                for idx in range(n_img):
+                    imgs.extend([x[idx,].numpy().squeeze()] + [yi[idx,].numpy().squeeze() for yi in y] + [
+                        x[idx,].numpy().squeeze()] + [pc[idx,].detach().cpu().numpy().squeeze() for pc in
+                                                      lossd['pred'].values()])
+                gridshow('Display', imgs,
+                         [(xc.min().item(), xc.max().item()), (0.0, 1.0), (0.0, 1.0), (-1.0, 1.0),
+                          (0.0, 1.0)] * 2 * n_img,
+                         [cv2.COLORMAP_BONE] * 10 * n_img, 10)
+                cv2.waitKey(2)
 
-    # batch_idx = 0
-    # # Use batches per epoch to make training on different sized datasets (cornell/jacquard) more equivalent.
-    # while batch_idx <= batches_per_epoch:
-    #     for x, y, _, _, _ in train_data:
-    #         batch_idx += 1
-    #         if batch_idx >= batches_per_epoch:
-    #             break
-    #
-    #         xc = x.to(device)
-    #         yc = [yy.to(device) for yy in y]
-    #         lossd = net.compute_loss(xc, yc)
-    #
-    #         loss = lossd['loss']
-    #
-    #         if batch_idx % 100 == 0:
-    #             losses = lossd['losses']
-    #             loss_str = ', '.join([f'{ln}: {l.item():0.4f}' for ln, l in losses.items()])
-    #             logging.info(
-    #                 'Epoch: {}, Batch: {}, Loss: {:0.4f} ====> Losses: {}'.format(epoch, batch_idx, loss.item(),
-    #                                                                               loss_str))
-    #
-    #         results['loss'] += loss.item()
-    #         for ln, l in lossd['losses'].items():
-    #             if ln not in results['losses']:
-    #                 results['losses'][ln] = 0
-    #             results['losses'][ln] += l.item()
-    #
-    #         optimizer.zero_grad()
-    #         loss.backward()
-    #         optimizer.step()
-    #
-    #         # Display the images
-    #         if vis:
-    #             imgs = []
-    #             n_img = min(4, x.shape[0])
-    #             for idx in range(n_img):
-    #                 imgs.extend([x[idx,].numpy().squeeze()] + [yi[idx,].numpy().squeeze() for yi in y] + [
-    #                     x[idx,].numpy().squeeze()] + [pc[idx,].detach().cpu().numpy().squeeze() for pc in
-    #                                                   lossd['pred'].values()])
-    #             gridshow('Display', imgs,
-    #                      [(xc.min().item(), xc.max().item()), (0.0, 1.0), (0.0, 1.0), (-1.0, 1.0),
-    #                       (0.0, 1.0)] * 2 * n_img,
-    #                      [cv2.COLORMAP_BONE] * 10 * n_img, 10)
-    #             cv2.waitKey(2)
-
-    results['loss'] /= batch_idx
+    results['loss'] /= max(1, steps)
     for l in results['losses']:
-        results['losses'][l] /= batch_idx
+        results['losses'][l] /= max(1, steps)
 
     return results
 
 
+# ------------------------ Main ------------------------
 def run():
     args = parse_args()
 
-    # Get the compute device
+    # Device
     device = get_device(args.force_cpu)
 
-    # Load the network
-    logging.info('Loading Network...')
+    # Network
+    logging.info(f'Loading Network... network = {args.network}')
     input_channels = 1 * args.use_depth + 3 * args.use_rgb
     network = get_network(args.network)
-    # 选择改进后的网络
     if args.network.lower() in ['grconvnet_goa']:
         net = network(
-            input_channels=input_channels,  # 输入通道数
-            dropout=bool(args.use_dropout),  # 是否使用dropout
-            prob=args.dropout_prob,  # dropout概率
-            channel_size=args.channel_size,  # 通道数
-            use_upconv=bool(args.upconv),  # 是否使用上采样卷积
-            use_unet=bool(args.unet),  # 是否使用UNet
-            use_fpn=bool(args.fpn),  # 是否使用FPN
-            use_cbam=bool(args.cbam),  # 是否使用CBAM
-            use_goa=bool(args.goa),  # 是否使用GOA
-            use_aff=bool(args.aff),  # 是否使用AFF
-            use_spd=bool(args.spdconv),  # 是否使用SPD
-            spd_scale=args.spd_scale,  # SPD卷积缩放因子
+            input_channels=input_channels,
+            dropout=bool(args.use_dropout),
+            prob=args.dropout_prob,
+            channel_size=args.channel_size,
+            use_upconv=bool(args.upconv),
+            use_unet=bool(args.unet),
+            use_fpn=bool(args.fpn),
+            use_cbam=bool(args.cbam),
+            use_goa=bool(args.goa),
+            use_aff=bool(args.aff),
+            use_spd=bool(args.spdconv),
+            spd_scale=args.spd_scale,
         )
     else:
-        # 选择原始网络
         net = network(
             input_channels=input_channels,
             dropout=args.use_dropout,
@@ -322,154 +376,117 @@ def run():
     net = net.to(device)
     logging.info('Done')
 
-    # Set-up output directories
+    # Output dirs & TB
     dt = datetime.datetime.now().strftime('%Y%m%d_%H%M')
     net_config_name = net.get_config_name()
     net_desc = f"{dt}_{'_'.join(args.description.split())}_{args.input_size}_{net_config_name}"
     save_folder = os.path.join(args.logdir, net_desc)
-    if not os.path.exists(save_folder):
-        os.makedirs(save_folder)
+    os.makedirs(save_folder, exist_ok=True)
     tb = tensorboardX.SummaryWriter(save_folder)
 
-    # Save commandline args
-    if args is not None:
-        params_path = os.path.join(save_folder, 'commandline_args.json')
-        with open(params_path, 'w') as f:
-            json.dump(vars(args), f)
+    # Save args
+    params_path = os.path.join(save_folder, 'commandline_args.json')
+    with open(params_path, 'w') as f:
+        json.dump(vars(args), f)
 
-    # Initialize logging
+    # Logging
     logging.root.handlers = []
     logging.basicConfig(
         level=logging.INFO,
-        filename="{0}/{1}.log".format(save_folder, 'log'),
+        filename=os.path.join(save_folder, 'log.log'),
         format='[%(asctime)s] {%(pathname)s:%(lineno)d} %(levelname)s - %(message)s',
         datefmt='%H:%M:%S'
     )
-    # set up logging to console
     console = logging.StreamHandler()
     console.setLevel(logging.DEBUG)
-    # set a format which is simpler for console use
-    formatter = logging.Formatter('%(name)-12s: %(levelname)-8s %(message)s')
-    console.setFormatter(formatter)
-    # add the handler to the root logger
+    console.setFormatter(logging.Formatter('%(name)-12s: %(levelname)-8s %(message)s'))
     logging.getLogger('').addHandler(console)
 
-    # Load Dataset
+    # Reproducibility & CUDNN
+    set_global_seed(args.random_seed)
+    torch.backends.cudnn.benchmark = True  # 若追求完全可复现可设为 False 并置 deterministic=True
+    # torch.backends.cudnn.deterministic = True
+
+    # Data
     logging.info('Loading {} Dataset...'.format(args.dataset.title()))
-    Dataset = get_dataset(args.dataset)
-    dataset = Dataset(args.dataset_path,
-                      output_size=args.input_size,
-                      ds_rotate=args.ds_rotate,
-                      random_rotate=True,
-                      random_zoom=True,
-                      include_depth=args.use_depth,
-                      include_rgb=args.use_rgb)
-    logging.info('Dataset size is {}'.format(dataset.length))
-
-    # Creating data indices for training and validation splits
-    indices = list(range(dataset.length))
-    split = int(np.floor(args.split * dataset.length))
-    if args.ds_shuffle:
-        np.random.seed(args.random_seed)
-        np.random.shuffle(indices)
-    train_indices, val_indices = indices[:split], indices[split:]
-    logging.info('Training size: {}'.format(len(train_indices)))
-    logging.info('Validation size: {}'.format(len(val_indices)))
-
-    # Creating data samplers and loaders
-    train_sampler = torch.utils.data.sampler.SubsetRandomSampler(train_indices)
-    val_sampler = torch.utils.data.sampler.SubsetRandomSampler(val_indices)
-
-    train_data = torch.utils.data.DataLoader(
-        dataset,
-        batch_size=args.batch_size,
-        num_workers=args.num_workers,
-        sampler=train_sampler
-    )
-    val_data = torch.utils.data.DataLoader(
-        dataset,
-        batch_size=1,
-        num_workers=args.num_workers,
-        sampler=val_sampler
-    )
+    train_data, val_data = make_dataloaders(args, save_folder)
     logging.info('Done')
 
+    # Optimizer
     if args.optim.lower() == 'adamw':
         logging.info(f"Using AdamW Optimizer with lr={args.lr} and weight_decay={args.weight_decay}")
         optimizer = optim.AdamW(net.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     elif args.optim.lower() == 'adam':
-        optimizer = optim.Adam(net.parameters())
+        optimizer = optim.Adam(net.parameters(), lr=args.lr)
     elif args.optim.lower() == 'sgd':
         optimizer = optim.SGD(net.parameters(), lr=0.01, momentum=0.9)
     else:
         raise NotImplementedError('Optimizer {} is not implemented'.format(args.optim))
 
-    # 添加学习率调度器 ---
+    # LR Scheduler
     logging.info(f"Using ReduceLROnPlateau scheduler with patience={args.lr_patience}")
-    # 我们要最大化IOU, 所以 mode='max'
     scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=0.1, patience=args.lr_patience)
 
-    # Print model architecture.
-    summary(net, (input_channels, args.input_size, args.input_size))
-    f = open(os.path.join(save_folder, 'arch.txt'), 'w')
-    sys.stdout = f
-    summary(net, (input_channels, args.input_size, args.input_size))
-    sys.stdout = sys.__stdout__
-    f.close()
+    # Save model arch
+    save_model_arch(net, save_folder)
 
-    # 初始化提前停止的变量
+    # Early stopping
     best_iou = 0.0
     patience_counter = 0
+
     for epoch in range(args.epochs):
-        # logging.info('Beginning Epoch {:02d}'.format(epoch))
+        # Train
         train_results = train(epoch, net, device, train_data, optimizer, args.batches_per_epoch, vis=args.vis)
 
-        # Log training losses to tensorboard
+        # TB: train
         tb.add_scalar('loss/train_loss', train_results['loss'], epoch)
         for n, l in train_results['losses'].items():
             tb.add_scalar('train_loss/' + n, l, epoch)
-        # 记录当前学习率
         tb.add_scalar('learning_rate', optimizer.param_groups[0]['lr'], epoch)
 
-        # Run Validation
+        # Validate
         logging.info(f"Epoch {epoch + 1}/{args.epochs} - Validating...")
         test_results = validate(net, device, val_data, args.iou_threshold)
-        iou = test_results['correct'] / (test_results['correct'] + test_results['failed'])
+        iou = test_results['correct'] / max(1, (test_results['correct'] + test_results['failed']))
         logging.info(
-            f"Epoch {epoch + 1}/{args.epochs} - Validation Result: {test_results['correct']}/{test_results['correct'] + test_results['failed']} = {iou:.4f}")
+            f"Epoch {epoch + 1}/{args.epochs} - Validation Result: {test_results['correct']}/{test_results['correct'] + test_results['failed']} = {iou:.4f}"
+        )
 
-        # Log validation results to tensorbaord
-        tb.add_scalar('loss/IOU', test_results['correct'] / (test_results['correct'] + test_results['failed']), epoch)
+        # TB: val
+        tb.add_scalar('loss/IOU', iou, epoch)
         tb.add_scalar('loss/val_loss', test_results['loss'], epoch)
         for n, l in test_results['losses'].items():
             tb.add_scalar('val_loss/' + n, l, epoch)
 
-        # 更新调度器
+        # Scheduler on IoU
         scheduler.step(iou)
 
-        # 保存最佳模型
+        # Save best
         if iou > best_iou:
             logging.info(f" >> IOU improved from {best_iou:.4f} to {iou:.4f}. Saving best model...")
             best_iou = iou
-            # 删除旧的 best 模型
+            # 删除旧的 best
             for f in os.listdir(save_folder):
                 if f.startswith('best_model'):
-                    os.remove(os.path.join(save_folder, f))
-            # 保存 state_dict 是更好的实践
+                    try:
+                        os.remove(os.path.join(save_folder, f))
+                    except Exception:
+                        pass
             torch.save(net, os.path.join(save_folder, f'best_model_epoch_{epoch + 1:02d}_iou_{iou:.4f}.pth'))
-            patience_counter = 0  # 只要有进步，耐心就重置
+            patience_counter = 0
         else:
             patience_counter += 1
 
-        # 保存周期性 checkpoint (可选)
+        # Periodic checkpoint
         if epoch % 5 == 0:
             logging.info(f"Epoch {epoch + 1}/{args.epochs} - Checkpoint saved")
             torch.save(net, os.path.join(save_folder, f'checkpoint_epoch_{epoch + 1:02d}_iou_{iou:.4f}.pth'))
 
-        # 检查是否需要提前停止
+        # Early stop
         if patience_counter >= args.early_stop_patience:
             logging.info(
-                f"Epoch {epoch + 1}/{args.epochs} - Early stopping triggered after {patience_counter} epochs with no improvement.")
+                f"Epoch {epoch + 1}/{args.epochs} - Early stopping triggered after {patience_counter} epochs with no improvement."
+            )
             break
 
 

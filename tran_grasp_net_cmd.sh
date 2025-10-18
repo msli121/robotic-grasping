@@ -17,6 +17,16 @@ python train_network.py --network grconvnet_goa --dataset cornell --dataset-path
 
 # cornell upconv + unet + goa
 python train_network.py --network grconvnet_goa --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell --use-dropout 1 --input-size 224 --split 0.8 --upconv 1 --unet 1 --goa 1
+
+# hybrid_grasp_net
+python train_network.py --network hybrid_grasp_net --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell --use-dropout 1 --input-size 224 --batch-size 8 --split 0.8
+python train_network.py --network hybrid_grasp_net --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell --use-dropout 1 --input-size 224 --batch-size 8 --split 0.8 --lr 1e-4 --weight-decay 5e-4 --batches-per-epoch 200
+
+# unet_grasp
+python train_network.py --network unet_grasp --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell --use-dropout 1 --input-size 300 --batch-size 8 --split 0.8
+python train_network.py --network unet_grasp --dataset jacquard --dataset-path D:\\datasets\\Jacquard --description training_Jacquard --use-dropout 1 --input-size 300 --batch-size 8 --split 0.9
+
+
 # ================Windows Jacquard 数据集======================
 
 # jacquard baseline

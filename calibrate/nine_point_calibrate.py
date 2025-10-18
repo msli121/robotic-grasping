@@ -11,7 +11,7 @@ from scipy.optimize import least_squares
 from calibrate.utils import normalize_corner_order, robot_pose_to_homogeneous_matrix
 from hardware.camera import RealSenseCamera
 from robot.densor_robot import DensorRobot
-from robot.gripper_controller import GripperControllerWrapper
+from robot.gripper_wifi_controller import GripperWiFiController
 
 
 # ==============================================================================
@@ -857,7 +857,7 @@ def do_calibrate_by_end_to_end(data_save_dir=None, redo=False):
 def verify_calibration_by_realsense_camera(data_save_dir=None, move_robot=False):
     """
     通过RealSense相机验证手眼标定结果，支持用户点击图像获取3D坐标
-    优化点：增加错误处理、可视化标记、深度平滑、结果保存和用户提示
+    增加错误处理、可视化标记、深度平滑、结果保存和用户提示
     """
     if not data_save_dir:
         logger.error(f"数据保存文件夹未指定")
@@ -881,7 +881,7 @@ def verify_calibration_by_realsense_camera(data_save_dir=None, move_robot=False)
     # ========== 初始化夹爪 ==========
     if move_robot:
         print('正在连接夹爪...')
-        gripper = GripperControllerWrapper("EC:23:06:00:D9:FB")
+        gripper = GripperWiFiController()
         if not gripper.connect():
             print(f"夹爪连接失败")
             return
@@ -891,14 +891,13 @@ def verify_calibration_by_realsense_camera(data_save_dir=None, move_robot=False)
     robot = DensorRobot()
     # default_grasp_pose = [140, 0, 230.0, -167, 2, 81, 5]
     # home position
-    default_grasp_pose = [140, 0, 330.0, -163, -1, 83, 5]
+    default_grasp_pose = [130, 0, 333.0, -171, -16, 171, 5]
     # 松开夹爪的位姿
-    open_grasp_pose = [140, -250, 230.0, -163, -1, 83, 5]
+    open_grasp_pose = [165, -265, 210.0, -171, -16, 171, 5]
     # y+ pose
-    # y_plus_pose = [-164, 7, 84, 5]
-    y_plus_pose = [-168, 5, 84, 5]
+    y_plus_pose = [-171, -16, 171, 5]
     # y- pose
-    y_minus_pose = [-164, -4, 83, 5]
+    y_minus_pose = [-179, -16, 171, 5]
     if move_robot:
         print('正在连接机械臂...')
         if not robot.connect():
@@ -937,38 +936,39 @@ def verify_calibration_by_realsense_camera(data_save_dir=None, move_robot=False)
             # 5. 缩放
             center_points = np.array([220, 0, 0])
             # xyz_scale = np.array([1.11496, 0.8479, 0.9253])
-            scale_robot_base_xyz = center_points + (robot_base_xyz - center_points) * np.array([1.0, 0.8, 1.1])
+            scale_robot_base_xyz = center_points + (robot_base_xyz - center_points) * np.array([1.0, 0.8, 1.15])
             # 4. 显示和记录结果
             result_str = (f"像素点: ({x},{y}) → 深度: {depth_value:.3f}m → "
                           f"相机坐标: X={camera_xyz[0]:.4f}m, Y={camera_xyz[1]:.4f}m, Z={camera_xyz[2]:.4f}m → "
                           f"基座坐标: X={robot_base_xyz[0]:.4f}mm, Y={robot_base_xyz[1]:.4f}mm, Z={robot_base_xyz[2]:.4f}mm → "
                           f"缩放坐标: X={scale_robot_base_xyz[0]:.4f}mm, Y={scale_robot_base_xyz[1]:.4f}mm, Z={scale_robot_base_xyz[2]:.4f}mm")
             print(result_str)
-
+    
             # scale_robot_base_xyz 四舍五入，保留两位小数点
             scale_robot_base_xyz = np.round(scale_robot_base_xyz, 2)
             # scale_robot_base_xyz = np.round(robot_base_xyz, 2)
             # 6. 移动机械臂到点击点
             if move_robot:
-                # z轴限制
-                if scale_robot_base_xyz[2] < -28:
-                    scale_robot_base_xyz[2] = scale_robot_base_xyz[2] - 1
-                if scale_robot_base_xyz[2] < -26:
-                    scale_robot_base_xyz[2] = scale_robot_base_xyz[2] - 2
-                elif scale_robot_base_xyz[2] < -25:
-                    scale_robot_base_xyz[2] = scale_robot_base_xyz[2] - 3
-                elif scale_robot_base_xyz[2] < -24:
-                    scale_robot_base_xyz[2] = scale_robot_base_xyz[2] - 2
-                elif scale_robot_base_xyz[2] < -20:
-                    scale_robot_base_xyz[2] = scale_robot_base_xyz[2] - 5
-                elif scale_robot_base_xyz[2] < 0:
-                    scale_robot_base_xyz[2] = scale_robot_base_xyz[2] - 10
-                else:
-                    scale_robot_base_xyz[2] = scale_robot_base_xyz[2] - 2
-                scale_robot_base_xyz[2] = max(scale_robot_base_xyz[2], -30)
+                # # z轴限制
+                # if scale_robot_base_xyz[2] < -28:
+                #     scale_robot_base_xyz[2] = scale_robot_base_xyz[2] - 1
+                # if scale_robot_base_xyz[2] < -26:
+                #     scale_robot_base_xyz[2] = scale_robot_base_xyz[2] - 2
+                # elif scale_robot_base_xyz[2] < -25:
+                #     scale_robot_base_xyz[2] = scale_robot_base_xyz[2] - 3
+                # elif scale_robot_base_xyz[2] < -24:
+                #     scale_robot_base_xyz[2] = scale_robot_base_xyz[2] - 2
+                # elif scale_robot_base_xyz[2] < -20:
+                #     scale_robot_base_xyz[2] = scale_robot_base_xyz[2] - 5
+                # elif scale_robot_base_xyz[2] < 0:
+                #     scale_robot_base_xyz[2] = scale_robot_base_xyz[2] - 10
+                # else:
+                #     scale_robot_base_xyz[2] = scale_robot_base_xyz[2] - 2
+                # scale_robot_base_xyz[2] = max(scale_robot_base_xyz[2], -30)
                 # scale_robot_base_xyz[2] = map_x_to_z(scale_robot_base_xyz[0])
                 # if scale_robot_base_xyz[1] < 0:
-                #     scale_robot_base_xyz[1] = scale_robot_base_xyz[1] + 10
+                #     scale_robot_base_xyz[1] = scale_robot_base_xyz[1] + 10\
+                scale_robot_base_xyz[2] = scale_robot_base_xyz[2] - 5
                 print(f"优化后的坐标点: {scale_robot_base_xyz}")
                 z_up_diff = 50
                 # 先回到安全点
@@ -1003,7 +1003,7 @@ def verify_calibration_by_realsense_camera(data_save_dir=None, move_robot=False)
                 # 关闭夹爪
                 print("关闭夹爪...")
                 gripper.close()
-                time.sleep(2)
+                time.sleep(1)
                 # 回到安全点
                 print("回到安全点...")
                 robot.send_position(default_grasp_pose)
@@ -1015,6 +1015,7 @@ def verify_calibration_by_realsense_camera(data_save_dir=None, move_robot=False)
                 # 松开夹爪
                 print("松开夹爪...")
                 gripper.open()
+                time.sleep(1)
                 # 回到安全点
                 print("回到安全点...")
                 robot.send_position(default_grasp_pose)

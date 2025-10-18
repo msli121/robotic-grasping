@@ -14,7 +14,7 @@ import yaml
 from grasp_predictor import GraspPredictor
 from hardware.camera import RealSenseCamera
 from robot.densor_robot import DensorRobot
-from robot.gripper_controller import GripperControllerWrapper
+from robot.gripper_wifi_controller import GripperWiFiController
 from yolo.inference import YOLODetector, YOLOEDetector, YOLOETextPromptDetector
 
 logger = logging.getLogger(__name__)
@@ -77,25 +77,23 @@ class CameraHandler:
 class GripperController:
     """蓝牙夹爪控制器"""
 
-    def __init__(self, mac_address="EC:23:06:00:D9:FB"):
-        self.mac_address = mac_address
-        self.gripper = GripperControllerWrapper(self.mac_address)
+    def __init__(self):
+        self.gripper = GripperWiFiController()
         self.connected = False
 
     def connect(self) -> bool:
-        self.connected = self.gripper.connect()
-        return bool(self.connected)
+        self.connected = bool(self.gripper.connect())
+        return self.connected
 
-    def disconnect(self):
-        logger.info("[Gripper] Gripper disconnected.")
+    def disconnect(self) -> None:
         self.gripper.disconnect()
         self.connected = False
+        logger.info("[Gripper] Gripper disconnected.")
 
     def open(self) -> bool:
         if not self.connected:
             logger.error("[Gripper] Gripper not connected.")
             return False
-        logger.info("[Gripper] Gripper opening...")
         self.gripper.open()
         time.sleep(1)
         logger.info("[Gripper] Gripper opened.")
@@ -105,7 +103,6 @@ class GripperController:
         if not self.connected:
             logger.error("[Gripper] Gripper not connected.")
             return False
-        logger.info("[Gripper] Gripper closing...")
         self.gripper.close()
         time.sleep(1)
         logger.info("[Gripper] Gripper closed.")

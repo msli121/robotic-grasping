@@ -528,7 +528,6 @@ class GenerativeResnet(GraspModel):
 
 if __name__ == "__main__":
     print("🧪 测试改进版 GR-ConvNet 模型")
-
     # 测试不同配置
     configs = {
         'baseline': {},

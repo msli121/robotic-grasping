@@ -71,7 +71,7 @@ class SystemBackend(QObject):
                                       port=self.config['hardware']['arm']['port'],
                                       home_pose=self.config['hardware']['arm']['home_pose'],
                                       place_target_pose=self.config['hardware']['arm']['place_target_pose'], )
-        self.gripper = GripperController(mac_address=self.config['hardware']['gripper']['mac_address'], )
+        self.gripper = GripperController()
         self.planner = RobotPlanner(self.arm, self.gripper)
         # 算法模块
         self.grasp_model = GraspModel(model_path=self.config['paths']['grasp_model'],

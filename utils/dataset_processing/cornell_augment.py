@@ -24,9 +24,9 @@
 #
 #     for i in tqdm(range(total_samples), desc="Generating Augmented Cornell"):
 #         rgb_path = os.path.join(input_dir, random.choice(rgb_files))
-#         base = rgb_path[:-6]  # 去掉 "_r.png"
-#         depth_path = base + 'd.tiff'
-#         pos_path = base + 'cpos.txt'
+#         channel_size = rgb_path[:-6]  # 去掉 "_r.png"
+#         depth_path = channel_size + 'd.tiff'
+#         pos_path = channel_size + 'cpos.txt'
 #
 #         # 读取数据
 #         rgb_img = cv2.imread(rgb_path)

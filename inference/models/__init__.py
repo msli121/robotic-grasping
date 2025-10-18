@@ -16,13 +16,15 @@ def get_network(network_name):
     elif network_name == 'grconvnet4':
         from .grconvnet4 import GenerativeResnet
         return GenerativeResnet
-    # 优化后的网络: grconvnet_mas
-    elif network_name == 'grconvnet_mas':
-        from .grconvnet_mas import GRConvNetMAS
-        return GRConvNetMAS
     # 基于GOA的改进GR-ConvNet
     elif network_name == 'grconvnet_goa':
         from .grconvnet_goa import GenerativeResnet
         return GenerativeResnet
+    elif network_name == 'hybrid_grasp_net':
+        from .hybrid_grasp_net import HybridGraspNet
+        return HybridGraspNet
+    elif network_name == 'unet_grasp':
+        from .unet_grasp import UNetGrasp
+        return UNetGrasp
     else:
         raise NotImplementedError('Network {} is not implemented'.format(network_name))

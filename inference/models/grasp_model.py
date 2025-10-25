@@ -16,6 +16,8 @@ class GraspModel(nn.Module):
     def compute_loss(self, xc, yc):
         y_pos, y_cos, y_sin, y_width = yc
         pos_pred, cos_pred, sin_pred, width_pred = self(xc)
+        # print(f'y_width, min:{y_width.min().item()}, max:{y_width.max().item()}')
+        # print(f'width_pred, min:{width_pred.min().item()}, max:{width_pred.max().item()}')
 
         p_loss = F.smooth_l1_loss(pos_pred, y_pos)
         cos_loss = F.smooth_l1_loss(cos_pred, y_cos)

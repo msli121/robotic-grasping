@@ -147,14 +147,16 @@ class UNetGrasp(GraspModel):
                  output_channels=1,
                  dropout=False,
                  prob=0.1,
-                 use_ag=True,
-                 use_coord_attn=True,
-                 use_dgg=False):
+                 use_ag=False,
+                 use_coord_attn=False,
+                 use_dgg=False,
+                 opt_loss: bool = False):
         super().__init__()
         C1, C2, C3, C4 = channel_size, channel_size * 2, channel_size * 4, channel_size * 8
         self.channel_size = channel_size
         self.dropout = bool(dropout)
         self.prob = float(prob)
+        self.opt_loss = opt_loss
 
         # -------- Encoder --------
         self.enc1 = nn.Sequential(
@@ -333,21 +335,6 @@ class UNetGrasp(GraspModel):
 
         return pos, cos, sin, width
 
-    # ---------------------- Losses ----------------------
-    @staticmethod
-    def _focal_bce(prob, target, alpha=0.25, gamma=2.0, eps=1e-6):
-        # prob in [0,1], target in [0,1]
-        p = torch.clamp(prob, eps, 1 - eps)
-        pos_term = -alpha * target * ((1 - p) ** gamma) * torch.log(p)
-        neg_term = -(1 - alpha) * (1 - target) * (p ** gamma) * torch.log(1 - p)
-        return (pos_term + neg_term).mean()
-
-    @staticmethod
-    def _log_l1(pred_pos, target_pos, eps=1e-3):
-        # pred/target expected >=0 (apply relu before)
-        return F.l1_loss(torch.log(torch.clamp(pred_pos, min=eps)),
-                         torch.log(torch.clamp(target_pos, min=eps)))
-
     def get_config_name(self):
         config_name = f"UNetGrasp_{self.channel_size}"
         if self.use_ag:
@@ -356,7 +343,63 @@ class UNetGrasp(GraspModel):
             config_name += "_CA"
         if self.use_dgg:
             config_name += "_DGG"
+        if self.opt_loss: config_name += "_OPTLOSS"
         return config_name
+
+    # ---------------------- Losses ----------------------
+    def compute_loss(self, xc, yc):
+        if not self.opt_loss:
+            # 完全使用原始 SmoothL1 四头损失 + 原样返回 pred（与基线一致）
+            return super().compute_loss(xc, yc)  # 基类实现见 grasp_model.py :contentReference[oaicite:2]{index=2}
+
+        # === 启用“优化版”损失 ===
+        y_pos, y_cos, y_sin, y_width = yc
+        pos_logits, cos_pred, sin_pred, width_pred = self(xc)  # pos 为 logits
+
+        eps = 1e-6
+        M = torch.clamp(y_pos, 0.0, 1.0)  # 可抓掩膜
+
+        # 1) Q：BCEWithLogits + 批内正负平衡
+        with torch.no_grad():
+            pos_sum = y_pos.sum()
+            neg_sum = (1.0 - y_pos).sum()
+            pos_weight = (neg_sum / (pos_sum + eps)).clamp(0.5, 10.0)
+        p_loss = F.binary_cross_entropy_with_logits(pos_logits, y_pos, pos_weight=pos_weight)
+
+        # 2) 角度：掩膜 SmoothL1（仅在可抓区域监督）
+        cos_map = F.smooth_l1_loss(cos_pred, y_cos, reduction='none')
+        sin_map = F.smooth_l1_loss(sin_pred, y_sin, reduction='none')
+        cos_loss = (cos_map * M).sum() / (M.sum() + eps)
+        sin_loss = (sin_map * M).sum() / (M.sum() + eps)
+
+        # 3) 宽度：掩膜 SmoothL1（像素域；你的标签/后处理保持原样）
+        width_map = F.smooth_l1_loss(width_pred, y_width, reduction='none')
+        width_loss = (width_map * M).sum() / (M.sum() + eps)
+
+        total = p_loss + cos_loss + sin_loss + width_loss
+
+        return {
+            'loss': total,
+            'losses': {
+                'p_loss': p_loss,
+                'cos_loss': cos_loss,
+                'sin_loss': sin_loss,
+                'width_loss': width_loss
+            },
+            # 注意：优化损失模式下，pos 作为概率图输出（sigmoid），其余保持不变
+            'pred': {
+                'pos': torch.sigmoid(pos_logits),
+                'cos': cos_pred,
+                'sin': sin_pred,
+                'width': width_pred
+            }
+        }
+
+    def predict(self, xc):
+        pos, cos, sin, width = self(xc)
+        if getattr(self, "opt_loss", False):
+            pos = torch.sigmoid(pos)
+        return {'pos': pos, 'cos': cos, 'sin': sin, 'width': width}
 
 
 # ---------------------- Quick Self Test ----------------------
@@ -368,6 +411,7 @@ if __name__ == '__main__':
     cfgs = {
         'AG_CA': {'use_ag': True, 'use_coord_attn': True, 'use_dgg': False},
         'AG_CA_DGG': {'use_ag': True, 'use_coord_attn': True, 'use_dgg': True},
+        'AG_CA_DGG_OPTLOSS': {'use_ag': True, 'use_coord_attn': True, 'use_dgg': True, 'opt_loss': True},
     }
 
     for name, cfg in cfgs.items():

@@ -22,7 +22,7 @@ python train_network.py --network grconvnet_goa --dataset cornell --dataset-path
 python train_network.py --network hybrid_grasp_net --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell --use-dropout 1 --input-size 224 --batch-size 8 --split 0.8
 python train_network.py --network hybrid_grasp_net --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell --use-dropout 1 --input-size 224 --batch-size 8 --split 0.8 --lr 1e-4 --weight-decay 5e-4 --batches-per-epoch 200
 
-# unet_grasp
+# ================unet_grasp======================
 python train_network.py --network unet_grasp --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell --use-dropout 1 --input-size 300 --batch-size 8 --split 0.8
 python train_network.py --network unet_grasp --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell --use-dropout 1 --input-size 224 --batch-size 8 --split 0.8 --batches-per-epoch 600
 python train_network.py --network unet_grasp --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description training_cornell --use-dropout 1 --input-size 224 --batch-size 8 --split 0.8 --batches-per-epoch 600 --use-ag
@@ -30,6 +30,7 @@ python train_network.py --network unet_grasp --dataset cornell --dataset-path D:
 python train_network.py --network unet_grasp --dataset cornell --dataset-path D:\\datasets\\cornell_grasp --description debug_overfit16 --use-dropout 0 --input-size 224 --batch-size 8 --split 0.98 --batches-per-epoch 60 --epochs 10 --ds-shuffle
 python train_network.py --network unet_grasp --dataset jacquard --dataset-path D:\\datasets\\Jacquard --description training_Jacquard --use-dropout 1 --input-size 300 --batch-size 8 --split 0.9
 python train_network.py --network unet_grasp --dataset cornell --dataset-path /root/datasets/cornell_grasp --description training_cornell --input-size 300 --split 0.8 --use-dropout 1 --batch-size 8
+conda activate grcnn && python train_network.py --network unet_grasp --dataset jacquard --dataset-path /root/datasets/Jacquard --description training_Jacquard --input-size 300 --split 0.9 --use-dropout 1 --batch-size 16
 
 # ================Windows Jacquard 数据集======================
 
@@ -79,6 +80,7 @@ python train_network.py --network grconvnet_goa --dataset cornell --dataset-path
 python train_network.py --network grconvnet_goa --dataset cornell --dataset-path /root/datasets/cornell_grasp --description training_cornell --input-size 224 --split 0.8 --use-dropout 1 --batch-size 8 --upconv 1 --unet 1 --goa 1 --aff 1
 
 # ================Linux Jacquard 数据集======================
+conda activate grcnn && python train_network.py --network grconvnet3 --dataset jacquard --dataset-path /root/datasets/Jacquard --description training_Jacquard --input-size 300 --split 0.9 --use-dropout 1 --batch-size 16
 # Jacquard baseline
 conda activate grcnn && python train_network.py --network grconvnet_goa --dataset jacquard --dataset-path /root/datasets/Jacquard --description training_Jacquard --input-size 300 --split 0.9 --use-dropout 1 --batch-size 16
 # Jacquard upconv

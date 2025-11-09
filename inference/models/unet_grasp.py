@@ -68,16 +68,22 @@ class AttentionGate(nn.Module):
 
     def __init__(self, in_x, in_g, inter):
         super().__init__()
+        # 对来自编码器跳跃连接的 x 进行线性变换
         self.theta_x = nn.Conv2d(in_x, inter, 1, bias=False)
+        # 对来自解码器的门控信号 g 进行线性变换
         self.phi_g = nn.Conv2d(in_g, inter, 1, bias=False)
+        # 用于生成最终单通道注意力图的线性变换
         self.psi = nn.Conv2d(inter, 1, 1, bias=False)
 
     def forward(self, x, g):
-        # ensure spatial match
+        # 空间对齐
         if x.size()[2:] != g.size()[2:]:
             g = F.interpolate(g, size=x.size()[2:], mode='bilinear', align_corners=False)
+        # 将 x 和 g 变换到同一空间并相加
         a = F.relu(self.theta_x(x) + self.phi_g(g), inplace=True)
+        # 进一步变换并生成注意力权重
         a = torch.sigmoid(self.psi(a))
+        # 将注意力权重应用到原始的 x 上
         return x * a
 
 
@@ -156,7 +162,9 @@ class UNetGrasp(GraspModel):
         self.channel_size = channel_size
         self.dropout = bool(dropout)
         self.prob = float(prob)
-        self.opt_loss = opt_loss
+        self.opt_loss = bool(opt_loss)
+        self.use_dgg = use_dgg
+        self.use_ag = use_ag
 
         # -------- Encoder --------
         self.enc1 = nn.Sequential(
@@ -187,13 +195,11 @@ class UNetGrasp(GraspModel):
         )
 
         # Optional depth-guided gating at mid-level (after enc3)
-        self.use_dgg = use_dgg
-        if use_dgg:
+        if self.use_dgg:
             self.dgg3 = DepthGuidedGating(C3, reduction=8)
 
         # Attention gates for skips
-        self.use_ag = use_ag
-        if use_ag:
+        if self.use_ag:
             # in_g must match the upsampled channel!
             self.ag3 = AttentionGate(C3, C3, C3 // 2)
             self.ag2 = AttentionGate(C2, C2, C2 // 2)

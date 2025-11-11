@@ -3,10 +3,9 @@ import argparse
 import datetime
 import json
 import logging
-import os
-import sys
-import random
 import math
+import os
+import random
 
 import cv2
 import numpy as np
@@ -109,7 +108,7 @@ def parse_args():
                         help='Weight decay for AdamW optimizer')
     parser.add_argument('--lr-patience', type=int, default=5,
                         help='Patience for ReduceLROnPlateau (epochs)')
-    parser.add_argument('--early-stop-patience', type=int, default=10,
+    parser.add_argument('--early-stop-patience', type=int, default=20,
                         help='Patience for early stopping (epochs)')
 
     # ---------------- 验证可视化开关 ----------------

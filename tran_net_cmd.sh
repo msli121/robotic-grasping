@@ -31,6 +31,8 @@ python train_network.py --network unet_grasp --dataset cornell --dataset-path D:
 python train_network.py --network unet_grasp --dataset jacquard --dataset-path D:\\datasets\\Jacquard --description training_Jacquard --use-dropout 1 --input-size 300 --batch-size 8 --split 0.9
 python train_network.py --network unet_grasp --dataset cornell --dataset-path /root/datasets/cornell_grasp --description training_cornell --input-size 300 --split 0.8 --use-dropout 1 --batch-size 8
 conda activate grcnn && python train_network.py --network unet_grasp --dataset jacquard --dataset-path /root/datasets/Jacquard --description training_Jacquard --input-size 300 --split 0.9 --use-dropout 1 --batch-size 16
+python train_network.py --network unet_grasp --dataset jacquard --dataset-path D:\\datasets\\Jacquard --description training_Jacquard --use-dropout 1 --input-size 300 --batch-size 8 --split 0.9 --opt-loss 1
+python train_network.py --network unet_grasp --dataset jacquard --dataset-path D:\\datasets\\Jacquard --description training_Jacquard --use-dropout 1 --input-size 300 --batch-size 8 --split 0.9  --use-ag 1
 
 # ================Windows Jacquard 数据集======================
 
